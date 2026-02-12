@@ -63,8 +63,8 @@ const ServiceRestartModal = ({
           </div>
         </div>
 
-        {/* Service Info */}
-        <div className="mb-6">
+        {/* Service Info   nimble restart command */}
+        {/* <div className="mb-6">
           <label className="block text-gray-700 mb-2 font-medium">Service Name</label>
           
           <div className="mb-3">
@@ -77,11 +77,11 @@ const ServiceRestartModal = ({
             <p className="text-xs uppercase text-gray-500 font-bold mb-1">
               Command to be executed:
             </p>
-            <code className="block px-3 py-2 bg-gray-900 text-green-300 rounded text-sm font-mono">
+            <code className="block px-3 py-2 bg-gray-900 text-gray-900 rounded text-sm font-mono">
               sudo service nimble restart
             </code>
           </div>
-        </div>
+        </div> */}
 
         {/* Action Buttons */}
         <div className="flex justify-end gap-3">
