@@ -827,13 +827,10 @@
 // export default ServersPageContent;
 
 
-
-
-
 // components/Servers/ServersPageContent.tsx
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { 
   FiTrash2, 
   FiEdit,
@@ -861,6 +858,28 @@ interface Server {
   lastChecked: string;
   sshUsername?: string;
   sshPassword?: string;
+}
+
+// Define interface for API response
+interface ServerApiResponse {
+  success: boolean;
+  servers?: Server[];
+  error?: string;
+  message?: string;
+  server?: Server;
+}
+
+// Define interface for server form data
+interface ServerFormData {
+  displayName: string;
+  ipAddress: string;
+  sshUsername: string;
+  sshPassword: string;
+  listeningPort: number;
+  sshPort: number;
+  originIpWithPort: string;
+  serverType: "origin" | "edge";
+  parentServerId?: string;
 }
 
 const ServersPageContent = () => {
@@ -911,41 +930,42 @@ const ServersPageContent = () => {
     results: []
   });
 
+  // Define fetchServers with useCallback
+  const fetchServers = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const response = await fetch('/api/servers');
+      const data: ServerApiResponse = await response.json();
+      
+      console.log("Fetched servers:", data);
+      
+      if (data.success && data.servers) {
+        // Ensure status is one of the allowed values
+        const validatedServers = data.servers.map((server: Server) => ({
+          ...server,
+          status: server.status === "online" || server.status === "offline" 
+            ? server.status 
+            : "unknown" as const
+        }));
+        
+        setServers(validatedServers);
+        setFilteredServers(validatedServers);
+      } else {
+        console.error("Failed to fetch servers:", data.error);
+      }
+    } catch {
+      console.error("Error fetching servers");
+      showSuccessMessage("Error", "Failed to load servers", 'error');
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
   // Load servers from API on mount
   useEffect(() => {
     setIsClient(true);
     fetchServers();
-  }, []);
-
-const fetchServers = async () => {
-  setIsLoading(true);
-  try {
-    const response = await fetch('/api/servers');
-    const data = await response.json();
-    
-    console.log("Fetched servers:", data); // Debug log
-    
-    if (data.success) {
-      // Ensure status is one of the allowed values
-      const validatedServers = data.servers.map((server: any) => ({
-        ...server,
-        status: server.status === "online" || server.status === "offline" 
-          ? server.status 
-          : "unknown"
-      }));
-      
-      setServers(validatedServers);
-      setFilteredServers(validatedServers);
-    } else {
-      console.error("Failed to fetch servers:", data.error);
-    }
-  } catch (error) {
-    console.error("Error fetching servers:", error);
-    showSuccessMessage("Error", "Failed to load servers", 'error');
-  } finally {
-    setIsLoading(false);
-  }
-};
+  }, [fetchServers]);
 
   useEffect(() => {
     setFilteredServers(servers);
@@ -1016,10 +1036,10 @@ const fetchServers = async () => {
               output: data.output || data.error,
               serverName: server.displayName
             };
-          } catch (error) {
+          } catch {
             return {
               success: false,
-              output: `Connection failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+              output: `Connection failed: Unknown error`,
               serverName: server.displayName
             };
           }
@@ -1032,7 +1052,6 @@ const fetchServers = async () => {
         results
       });
 
-      // FIXED: Properly type the status
       const updatedServers: Server[] = servers.map(server => {
         if (selectedServerIds.includes(server.id)) {
           const result = results.find(r => r.serverName === server.displayName);
@@ -1051,7 +1070,6 @@ const fetchServers = async () => {
       setSelectedServerIds([]);
       setIsServiceModalOpen(false);
       
-      // FIXED: Only update if there are selected servers
       if (selectedServers.length > 0) {
         const firstServer = selectedServers[0];
         const updatedFirstServer = updatedServers.find(s => s.id === firstServer.id);
@@ -1071,11 +1089,11 @@ const fetchServers = async () => {
         }
       }
       
-    } catch (error) {
-      console.error("Service restart failed:", error);
+    } catch {
+      console.error("Service restart failed");
       showSuccessMessage(
         "Service Restart Failed",
-        `Service restart failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+        "Service restart failed",
         'error'
       );
     } finally {
@@ -1087,7 +1105,7 @@ const fetchServers = async () => {
     setIsAddModalOpen(true);
   };
 
-  const handleCreateServer = async (serverData: any) => {
+  const handleCreateServer = async (serverData: ServerFormData) => {
     try {
       const response = await fetch('/api/servers', {
         method: 'POST',
@@ -1098,19 +1116,19 @@ const fetchServers = async () => {
         })
       });
 
-      const data = await response.json();
+      const data: ServerApiResponse = await response.json();
       
       if (data.success) {
-        await fetchServers(); // Refresh the list
+        await fetchServers();
         setIsAddModalOpen(false);
         showSuccessMessage(
           "Server Created",
           `Server &quot;${serverData.displayName}&quot; created successfully!`
         );
       } else {
-        showSuccessMessage("Error", data.error, 'error');
+        showSuccessMessage("Error", data.error || "Failed to create server", 'error');
       }
-    } catch (error) {
+    } catch {
       showSuccessMessage("Error", "Failed to create server", 'error');
     }
   };
@@ -1120,7 +1138,7 @@ const fetchServers = async () => {
     setIsEditModalOpen(true);
   };
 
-  const handleUpdateServer = async (serverData: any) => {
+  const handleUpdateServer = async (serverData: ServerFormData) => {
     if (!editingServer) return;
     
     try {
@@ -1133,10 +1151,10 @@ const fetchServers = async () => {
         })
       });
 
-      const data = await response.json();
+      const data: ServerApiResponse = await response.json();
       
       if (data.success) {
-        await fetchServers(); // Refresh the list
+        await fetchServers();
         setEditingServer(null);
         setIsEditModalOpen(false);
         showSuccessMessage(
@@ -1144,9 +1162,9 @@ const fetchServers = async () => {
           `Server &quot;${serverData.displayName}&quot; updated successfully!`
         );
       } else {
-        showSuccessMessage("Error", data.error, 'error');
+        showSuccessMessage("Error", data.error || "Failed to update server", 'error');
       }
-    } catch (error) {
+    } catch {
       showSuccessMessage("Error", "Failed to update server", 'error');
     }
   };
@@ -1174,10 +1192,10 @@ const fetchServers = async () => {
           method: 'DELETE'
         });
 
-        const data = await response.json();
+        const data: ServerApiResponse = await response.json();
         
         if (data.success) {
-          await fetchServers(); // Refresh the list
+          await fetchServers();
           setSelectedServerIds(prev => prev.filter(id => id !== deleteModal.serverId));
           closeDeleteConfirmation();
           showSuccessMessage(
@@ -1185,9 +1203,9 @@ const fetchServers = async () => {
             `Server &quot;${deleteModal.serverName}&quot; deleted successfully!`
           );
         } else {
-          showSuccessMessage("Error", data.error, 'error');
+          showSuccessMessage("Error", data.error || "Failed to delete server", 'error');
         }
-      } catch (error) {
+      } catch {
         showSuccessMessage("Error", "Failed to delete server", 'error');
       }
     }
@@ -1201,11 +1219,10 @@ const fetchServers = async () => {
     });
   };
 
-  const handleCheckHealth = async (id: number) => {
-    // Implement health check logic here
+  const handleCheckHealth = () => {
     showSuccessMessage(
       "Health Check",
-      `Server health check initiated!`,
+      "Server health check initiated!",
       'info'
     );
   };
@@ -1296,7 +1313,7 @@ const fetchServers = async () => {
           )}
         </div>
 
-        <div className="border border-gray-700 rounded-lg overflow-hidden bg-yellow-700 shadow-sm">
+        <div className="border border-gray-700 rounded-lg overflow-hidden bg-gray-800 shadow-sm">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -1375,7 +1392,7 @@ const fetchServers = async () => {
                       <td className="px-4 py-3">
                         <div className="flex gap-2">
                           <button 
-                            onClick={() => handleCheckHealth(server.id)}
+                            onClick={handleCheckHealth}
                             className="p-2 hover:bg-gray-700 rounded transition-colors"
                             title="Check Health"
                           >
@@ -1636,3 +1653,4 @@ const fetchServers = async () => {
 };
 
 export default ServersPageContent;
+
