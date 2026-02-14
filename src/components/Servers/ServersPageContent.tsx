@@ -1313,7 +1313,7 @@ const ServersPageContent = () => {
           )}
         </div>
 
-        <div className="border border-gray-700 rounded-lg overflow-hidden bg-gray-800 shadow-sm">
+        <div className="border border-gray-700 rounded-lg overflow-hidden bg-yellow-700 shadow-sm">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
