@@ -1,0 +1,15 @@
+[
+  {
+    "id": 1771068277792,
+    "displayName": "202.62.72.221",
+    "ipAddress": "202.62.72.221",
+    "sshUsername": "ulkaadminmini",
+    "sshPassword": "streamer#4066",
+    "listeningPort": 9229,
+    "sshPort": 9229,
+    "originIpWithPort": "10.10.148.25:8081",
+    "serverType": "origin",
+    "status": "online",
+    "lastChecked": "Never"
+  }
+]
