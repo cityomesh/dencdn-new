@@ -1,19 +1,6 @@
 [
   {
-    "id": 1771919806991,
-    "displayName": "202.62.72.221",
-    "ipAddress": "202.62.72.221",
-    "sshUsername": "ucastcdn",
-    "sshPassword": "Ucast@709###",
-    "listeningPort": 9229,
-    "sshPort": 9229,
-    "originIpWithPort": "202.62.72.221:8081",
-    "serverType": "origin",
-    "status": "online",
-    "lastChecked": "2/24/2026, 2:07:08 PM"
-  },
-  {
-    "id": 1771930382178,
+    "id": 1771847480979,
     "displayName": "103.189.178.66",
     "ipAddress": "103.189.178.66",
     "sshUsername": "ulkaadmin",
@@ -23,6 +10,6 @@
     "originIpWithPort": "103.189.178.66:8081",
     "serverType": "origin",
     "status": "online",
-    "lastChecked": "2/24/2026, 4:26:03 PM"
+    "lastChecked": "Never"
   }
 ]
