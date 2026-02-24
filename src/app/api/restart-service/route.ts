@@ -1,4 +1,4 @@
-// app/api/reload-server/route.ts
+// app/api/restart-service/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { Client } from 'ssh2';
 
@@ -29,60 +29,49 @@ function getErrorMessage(error: unknown): string {
 }
 
 export async function POST(req: NextRequest) {
-  let requestBody; // Declare variable outside try block
-  
   try {
-    requestBody = await req.json(); // Assign here
+    const body = await req.json();
     const {
-      serverId,
       ipAddress,
-      port,
-      sshPort,
+      port = 22,
       sshUsername,
       sshPassword,
-      serviceName,
-    } = requestBody;
+      serviceName = "nimble"
+    } = body;
 
     if (!ipAddress || !sshUsername || !sshPassword) {
       return NextResponse.json(
-        { success: false, error: "Missing parameters" },
+        { success: false, error: "Missing required parameters" },
         { status: 400 }
       );
     }
 
-    // SSH connection and service restart
-    const result = await restartServiceViaSSH(
-      ipAddress,
-      sshPort || port || 22,
-      sshUsername,
-      sshPassword,
-      serviceName || "nimble"
+    const result = await restartServiceWithSSH2(
+      ipAddress, 
+      port, 
+      sshUsername, 
+      sshPassword, 
+      serviceName
     );
 
     return NextResponse.json({
       success: true,
-      output: result,
-      serverId
+      message: result
     });
 
-  } catch (error: unknown) { // Change 'any' to 'unknown'
-    console.error("Reload server error:", error);
+  } catch (error: unknown) { // 'any' ని 'unknown' గా మార్చాను
+    console.error("Restart service error:", error);
     
     const errorMessage = getErrorMessage(error);
     
-    // Now we can access requestBody safely
     return NextResponse.json(
-      { 
-        success: false, 
-        error: errorMessage,
-        serverId: requestBody?.serverId // Use the outer variable
-      },
+      { success: false, error: errorMessage },
       { status: 500 }
     );
   }
 }
 
-async function restartServiceViaSSH(
+async function restartServiceWithSSH2(
   host: string,
   port: number,
   username: string,
@@ -99,7 +88,7 @@ async function restartServiceViaSSH(
       const escapedPassword = password.replace(/'/g, "'\\''");
       
       // Most reliable method: echo password to sudo -S
-      const command = `echo '${escapedPassword}' | sudo -S service ${serviceName} restart && echo "SUCCESS"`;
+      const command = `echo '${escapedPassword}' | sudo -S service ${serviceName} restart`;
       
       conn.exec(command, (err, stream) => {
         if (err) {
@@ -118,9 +107,8 @@ async function restartServiceViaSSH(
           } else {
             // Check if it's a password error
             if (errorOutput.includes('sudo: a terminal is required') || 
-                errorOutput.includes('incorrect password') ||
-                errorOutput.includes('password is required')) {
-              reject(new Error(`Sudo password failed. Please check sudo permissions or configure NOPASSWD in sudoers.`));
+                errorOutput.includes('incorrect password')) {
+              reject(new Error(`Sudo password failed: ${errorOutput}`));
             } else {
               reject(new Error(errorOutput || `Command failed with code ${code}`));
             }

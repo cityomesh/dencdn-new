@@ -1,4 +1,4 @@
-// // components/Header.tsx
+// components/Header.tsx
 "use client";
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
@@ -11,10 +11,18 @@ interface Server {
   id: number;
   displayName: string;
   ipAddress: string;
-  [key: string]: unknown;
+  sshUsername: string;
+  sshPassword: string;
+  port: string;
+  sshPort?: number;
+  serverType: "origin" | "edge";
 }
 
-const Header = () => {
+interface HeaderProps {
+  onCreateRoute?: (data: { originUrls: string[]; selectedServers: Server[] }) => void;
+}
+
+const Header: React.FC<HeaderProps> = ({ onCreateRoute }) => {
   const [isMobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
   const [isCreateRouteModalOpen, setCreateRouteModalOpen] = useState(false);
@@ -30,43 +38,55 @@ const Header = () => {
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
-  // Load logged in user from localStorage
   useEffect(() => {
     const user = localStorage.getItem('loggedInUser');
     if (user) {
       setLoggedInUser(user);
     } else {
-      // Default for demo
       setLoggedInUser("rcastcdn");
       localStorage.setItem('loggedInUser', "rcastcdn");
     }
   }, []);
 
-  // Load servers from localStorage
   useEffect(() => {
-    const savedServers = localStorage.getItem('servers');
-    if (savedServers) {
-      try {
-        const parsedServers = JSON.parse(savedServers) as Server[];
-        setServers(parsedServers);
-      } catch (error) {
-        console.error("Error loading servers:", error);
-      }
-    }
+    fetchServers();
   }, []);
+
+  const fetchServers = async () => {
+    try {
+      const response = await fetch('/api/servers');
+      const data = await response.json();
+      
+      if (data.success) {
+        setServers(data.servers);
+        console.log("Loaded servers from API:", data.servers.length);
+      } else {
+        console.error("Failed to load servers:", data.error);
+      }
+    } catch (error) {
+      console.error("Error fetching servers:", error);
+    }
+  };
 
   const handleAdminLogout = () => {
     localStorage.removeItem('loggedInUser');
     router.push("/");
   };
 
-  const handleCreateRoute = (data: { originUrls: string[]; selectedServers: string[] }) => {
-    console.log("Creating route:", data);
-    alert(`Route created successfully!\nURLs: ${data.originUrls.length}\nServers: ${data.selectedServers.length}`);
+  const handleCreateRoute = (data: { originUrls: string[]; selectedServers: Server[] }) => {
+    console.log("Creating route from Header:", data);
+    
+    // If onCreateRoute prop is provided, call it (for Homepage)
+    if (onCreateRoute) {
+      onCreateRoute(data);
+    }
+    
+    // Close modal
+    setCreateRouteModalOpen(false);
   };
 
   return (
-    <div className="bg-black">
+    <>
       <header
         className={`fixed top-0 left-0 w-full z-50 shadow-md transition-all duration-500 ease-in-out ${
           isScrolled ? "bg-red-700/90 backdrop-blur-sm py-3" : "bg-yellow-700 py-4"
@@ -74,7 +94,6 @@ const Header = () => {
       >
         <div className="container mx-auto px-6 flex items-center justify-between">
           
-          {/* Logo/Brand Name with Image and Text - WITH LINK */}
           <div className="flex items-center space-x-4">
             <div className="relative w-30 h-30">
               <Image
@@ -95,7 +114,6 @@ const Header = () => {
             </Link>
           </div>
 
-          {/* Desktop Navigation - 3 HEADINGS */}
           <nav className="hidden md:block">
             <ul className="flex items-center space-x-8">
               <li>
@@ -125,7 +143,6 @@ const Header = () => {
             </ul>
           </nav>
 
-          {/* Right Side - Show Logged-in Username & Logout */}
           <div className="flex items-center space-x-4">
             <div className="hidden md:flex items-center gap-2 text-white bg-white/10 px-3 py-1.5 rounded-lg">
               <FaUserCircle className="text-xl" />
@@ -217,7 +234,7 @@ const Header = () => {
         onSubmit={handleCreateRoute}
         availableServers={servers}
       />
-    </div>
+    </>
   );
 };
 
