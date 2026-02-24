@@ -129,31 +129,7 @@ const ServiceRestartModal = ({
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-      <div className="bg-gray-800 rounded-lg p-6 w-full max-w-lg border border-gray-700 relative">
-        {/* Header with Close Icon */}
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-xl font-bold text-white">Restart Service</h2>
-          <button 
-            onClick={onClose} 
-            className="text-gray-400 hover:text-white transition-colors"
-          >
-            <FiX size={24} /> {/* FiX Error Resolved */}
-          </button>
-        </div>
-
-        {/* Service Name Input */}
-        <div className="mb-4">
-          <label className="block text-sm font-medium text-gray-400 mb-1">
-            Service Name
-          </label>
-          <input 
-            type="text"
-            value={serviceName}
-            onChange={(e) => setServiceName(e.target.value)}
-            className="w-full bg-gray-900 border border-gray-700 rounded-md px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-        </div>
-
+      <div className="bg-gray-800 rounded-lg p-6 w-full max-w-lg border border-gray-700 relative">    
         {/* Selected Servers Info */}
         <div className="mb-6">
           <p className="text-gray-300 mb-2 text-sm">

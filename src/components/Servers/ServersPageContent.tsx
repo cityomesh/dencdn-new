@@ -794,7 +794,7 @@ const ServersPageContent = () => {
                 </div>
                 <div>
                   <h3 className="text-lg font-bold text-white">Service Restart Results</h3>
-                  <p className="text-blue-300 text-sm">Service: {restartResultsModal.serviceName}</p>
+                  {/* <p className="text-blue-300 text-sm">Service: {restartResultsModal.serviceName}</p> */}
                 </div>
               </div>
               <button
