@@ -91,7 +91,7 @@
 
 "use client";
 
-import { FiRefreshCw, FiX } from "react-icons/fi"; // FiX is now used below
+import { FiRefreshCw } from "react-icons/fi"; // FiX ని remove చేశాను
 import { useState } from "react";
 
 interface Server {
@@ -119,7 +119,7 @@ const ServiceRestartModal = ({
   onConfirm,
   isRestarting
 }: ServiceRestartModalProps) => {
-  const [serviceName, setServiceName] = useState<string>("nimble"); // setServiceName is now used
+  const [serviceName] = useState<string>("nimble"); // setServiceName ని remove చేశాను
   
   if (!isOpen) return null;
 
