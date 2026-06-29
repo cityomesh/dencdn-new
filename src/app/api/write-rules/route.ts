@@ -297,8 +297,6 @@
 
 
 
-
-
 // app/api/write-rules/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { Client } from 'ssh2';
@@ -517,7 +515,8 @@ async function writeRulesToServer(
               
               // --- STEP 2: PERMISSION DENIED? FALLBACK TO SUDO ---
               // SFTP error codes: 4 = permission denied, 2 = no such file
-              const errCode = (writeErr as any).code;
+              // ✅ Fix: Use SftpError instead of any
+              const errCode = (writeErr as SftpError).code;
               console.log(`Direct write error: code=${errCode}, message=${writeErr.message}`);
               
               if (errCode === 4) { // Permission denied
