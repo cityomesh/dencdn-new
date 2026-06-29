@@ -109,7 +109,16 @@ async function fetchRulesViaSSH(
           try {
             // Parse the rules.conf content
             // First, remove the comment line
-            const cleanedData = data.replace(/\/\*.*?\*\//g, '').trim();
+            // const cleanedData = data.replace(/\/\*.*?\*\//g, '').trim();
+            // const cleanedData = data.replace(/^[\s\r\n]*\/\*[\s\S]*?\*\/[\s\r\n]*/, '').trim();
+
+            const jsonStart = data.indexOf('{');
+            if (jsonStart === -1) {
+              // If no JSON found, maybe file is empty or invalid
+              resolve({ routes: [], error: 'No JSON found in rules.conf' });
+              return;
+            }
+            const cleanedData = data.substring(jsonStart).trim();
             
             if (!cleanedData) {
               resolve({ routes: [], error: 'Empty rules.conf file' });

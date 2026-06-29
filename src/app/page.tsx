@@ -1,6 +1,6 @@
 "use client";
 import React from "react";
-import "../../node_modules/bootstrap-icons/font/bootstrap-icons.css";
+import "../../node_modules/bootstrap-icons/font/bootstrap-icons.json"
 import Login from "../components/Login/LoginPage";
 
 const Home: React.FC = () => {
