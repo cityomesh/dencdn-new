@@ -16,7 +16,7 @@ export default function Login() {
     setMessage("");
     setIsSuccess(false);
 
-    if (username === "fastway" && password === "fastway@123") {
+    if (username === "rcastcdn" && password === "rcastcdn@123") {
       setMessage("Login successfully");
       setIsSuccess(true);
       

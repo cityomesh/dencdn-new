@@ -1,16 +1,17 @@
+// components/Servers/ServerForm.tsx
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { 
-  FiX, 
-  FiPlus, 
-  FiServer, 
-  FiGlobe, 
-  FiUser, 
-  FiLock, 
+import {
+  FiX,
+  FiPlus,
+  FiServer,
+  FiGlobe,
+  FiUser,
+  FiLock,
   FiAlertCircle,
   FiCpu,
-  FiTerminal
+  FiTerminal,
 } from "react-icons/fi";
 
 // Internal interface for server selection
@@ -39,6 +40,7 @@ interface ServerFormProps {
   initialValues?: ServerFormData;
   onSubmit: (values: ServerFormData) => void;
   title: string;
+  servers?: AvailableServer[];
 }
 
 export function ServerForm({
@@ -47,6 +49,7 @@ export function ServerForm({
   initialValues,
   onSubmit,
   title,
+  servers = [],
 }: ServerFormProps) {
   const [formData, setFormData] = useState<ServerFormData>({
     displayName: "",
@@ -59,40 +62,28 @@ export function ServerForm({
     serverType: "origin",
     parentServerId: undefined,
   });
-  
+
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [availableServers, setAvailableServers] = useState<AvailableServer[]>([]);
 
+  // ✅ Parent నుండి వచ్చిన servers నుండి origin servers మాత్రమే filter చేయండి
   useEffect(() => {
-    if (opened) {
-      loadAvailableServers();
-    }
-  }, [opened]);
+    if (!opened) return;
 
-  const loadAvailableServers = () => {
-    const savedServers = localStorage.getItem('servers');
-    if (savedServers) {
-      try {
-        const parsedServers = JSON.parse(savedServers) as AvailableServer[];
-        
-        const originServers = parsedServers.filter((server) => 
-          server.serverType === 'origin'
-        );
-        
-        const formattedServers = originServers.map((server) => ({
-          id: server.id,
-          displayName: server.displayName,
-          ipAddress: server.ipAddress
-        }));
-        
-        setAvailableServers(formattedServers);
-      } catch (error) {
-        console.error("Error loading servers:", error);
-        setAvailableServers([]);
-      }
-    }
-  };
+    const originServers = servers.filter(
+      (server) => server.serverType === "origin"
+    );
 
+    setAvailableServers(
+      originServers.map((server) => ({
+        id: server.id,
+        displayName: server.displayName,
+        ipAddress: server.ipAddress,
+      }))
+    );
+  }, [opened, servers]);
+
+  // Modal close అయినప్పుడు form reset చేయండి
   useEffect(() => {
     if (!opened) {
       setFormData({
@@ -110,6 +101,7 @@ export function ServerForm({
     }
   }, [opened]);
 
+  // Edit mode లో initial values load చేయండి
   useEffect(() => {
     if (initialValues && opened) {
       setFormData(initialValues);
@@ -148,18 +140,41 @@ export function ServerForm({
     return Object.keys(newErrors).length === 0;
   };
 
+  // ✅✅✅ KEY FIX: submit చేసే ముందు parentServerId ను displayName గా convert చేయండి
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (validateForm()) {
-      onSubmit(formData);
-      onClose();
+    if (!validateForm()) return;
+
+    // Edge server అయితే, select చేసిన origin server యొక్క displayName (CDN name) ను తీసుకోండి
+    let finalParentServerName: string | undefined = undefined;
+
+    if (formData.serverType === "edge" && formData.parentServerId) {
+      const parent = availableServers.find(
+        (srv) => String(srv.id) === String(formData.parentServerId)
+      );
+      finalParentServerName = parent ? parent.displayName : undefined;
     }
+
+    // submit చేయాల్సిన final data
+    const finalData: ServerFormData = {
+      ...formData,
+      // parentServerId ను displayName గా మార్చి పంపుతున్నాం
+      parentServerId: finalParentServerName,
+    };
+
+    console.log("Submitting server data:", finalData);
+
+    onSubmit(finalData);
+    onClose();
   };
 
-  const handleChange = (field: keyof ServerFormData, value: string | number | undefined) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
+  const handleChange = (
+    field: keyof ServerFormData,
+    value: string | number | undefined
+  ) => {
+    setFormData((prev) => ({ ...prev, [field]: value }));
     if (errors[field]) {
-      setErrors(prev => ({ ...prev, [field]: "" }));
+      setErrors((prev) => ({ ...prev, [field]: "" }));
     }
   };
 
@@ -170,24 +185,30 @@ export function ServerForm({
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-lg shadow-xl w-full max-w-5xl max-h-[90vh] overflow-y-auto">
-        <div className="flex justify-between items-center p-6 border-b sticky top-0 bg-white">
+        <div className="flex justify-between items-center p-6 border-b sticky top-0 bg-white z-10">
           <h2 className="text-xl font-bold text-gray-800">{title}</h2>
-          <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full transition-colors">
+          <button
+            onClick={onClose}
+            className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+          >
             <FiX size={20} className="text-gray-600" />
           </button>
         </div>
 
         <form onSubmit={handleSubmit} className="p-6">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            {/* LEFT COLUMN */}
             <div className="space-y-6">
               <div className="sticky top-0 bg-white pb-2">
                 <h3 className="text-md font-semibold uppercase text-gray-700 tracking-wider border-b-2 border-blue-500 pb-2 inline-block">
                   Server Details
                 </h3>
               </div>
-              
+
               <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
-                <label className="block text-sm font-medium mb-3 text-gray-700">Server Type *</label>
+                <label className="block text-sm font-medium mb-3 text-gray-700">
+                  Server Type *
+                </label>
                 <div className="flex gap-6">
                   <label className="flex items-center cursor-pointer group">
                     <input
@@ -195,12 +216,16 @@ export function ServerForm({
                       name="serverType"
                       value="origin"
                       checked={formData.serverType === "origin"}
-                      onChange={(e) => handleChange("serverType", e.target.value as "origin")}
+                      onChange={(e) =>
+                        handleChange("serverType", e.target.value as "origin")
+                      }
                       className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
                     />
                     <span className="ml-2 text-sm text-gray-700 group-hover:text-blue-600">
                       <span className="font-medium">Origin Server</span>
-                      <span className="text-xs text-gray-500 ml-2">(Content source)</span>
+                      <span className="text-xs text-gray-500 ml-2">
+                        (Content source)
+                      </span>
                     </span>
                   </label>
                   <label className="flex items-center cursor-pointer group">
@@ -209,76 +234,131 @@ export function ServerForm({
                       name="serverType"
                       value="edge"
                       checked={formData.serverType === "edge"}
-                      onChange={(e) => handleChange("serverType", e.target.value as "edge")}
+                      onChange={(e) =>
+                        handleChange("serverType", e.target.value as "edge")
+                      }
                       className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
                     />
                     <span className="ml-2 text-sm text-gray-700 group-hover:text-blue-600">
                       <span className="font-medium">Edge Server</span>
-                      <span className="text-xs text-gray-500 ml-2">(Content distributor)</span>
+                      <span className="text-xs text-gray-500 ml-2">
+                        (Content distributor)
+                      </span>
                     </span>
                   </label>
                 </div>
               </div>
 
               <div className="bg-white">
-                <label className="block text-sm font-medium mb-1 text-gray-700">Display Name *</label>
+                <label className="block text-sm font-medium mb-1 text-gray-700">
+                  Display Name *
+                </label>
                 <div className="relative">
-                  <FiServer className="absolute left-3 top-3 text-gray-500" size={16} />
+                  <FiServer
+                    className="absolute left-3 top-3 text-gray-500"
+                    size={16}
+                  />
                   <input
                     type="text"
                     value={formData.displayName}
                     onChange={(e) => handleChange("displayName", e.target.value)}
                     placeholder="e.g., Edge-London-01"
                     className={`w-full pl-10 pr-4 py-2.5 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors ${
-                      errors.displayName ? "border-red-500 bg-red-50" : "border-gray-300 hover:border-gray-400"
+                      errors.displayName
+                        ? "border-red-500 bg-red-50"
+                        : "border-gray-300 hover:border-gray-400"
                     }`}
                   />
                 </div>
-                {errors.displayName && <p className="text-red-600 text-sm mt-1 flex items-center gap-1"><FiAlertCircle size={14} />{errors.displayName}</p>}
+                {errors.displayName && (
+                  <p className="text-red-600 text-sm mt-1 flex items-center gap-1">
+                    <FiAlertCircle size={14} />
+                    {errors.displayName}
+                  </p>
+                )}
               </div>
 
+              {/* ✅ Parent Server dropdown — origin servers మాత్రమే */}
               {showParentSelection && (
                 <div className="bg-white">
-                  <label className="block text-sm font-medium mb-1 text-gray-700">Parent Server *</label>
+                  <label className="block text-sm font-medium mb-1 text-gray-700">
+                    Parent Server *
+                  </label>
                   <select
                     value={formData.parentServerId || ""}
-                    onChange={(e) => handleChange("parentServerId", e.target.value)}
+                    onChange={(e) =>
+                      handleChange("parentServerId", e.target.value)
+                    }
                     className={`w-full border rounded-lg py-2.5 px-3 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white ${
-                      errors.parentServerId ? "border-red-500 bg-red-50" : "border-gray-300 hover:border-gray-400"
+                      errors.parentServerId
+                        ? "border-red-500 bg-red-50"
+                        : "border-gray-300 hover:border-gray-400"
                     }`}
                   >
                     <option value="">-- Select parent origin server --</option>
-                    {availableServers.map((server) => (
-                      <option key={server.id} value={server.id}>
-                        {server.displayName} ({server.ipAddress})
+                    {availableServers.length === 0 ? (
+                      <option value="" disabled>
+                        No origin servers found
                       </option>
-                    ))}
+                    ) : (
+                      availableServers.map((server) => (
+                        <option key={server.id} value={server.id}>
+                          {server.displayName} ({server.ipAddress})
+                        </option>
+                      ))
+                    )}
                   </select>
+                  {errors.parentServerId && (
+                    <p className="text-red-600 text-sm mt-1 flex items-center gap-1">
+                      <FiAlertCircle size={14} />
+                      {errors.parentServerId}
+                    </p>
+                  )}
                 </div>
               )}
 
               <div className="bg-white">
-                <label className="block text-sm font-medium mb-1 text-gray-700">IP Address *</label>
+                <label className="block text-sm font-medium mb-1 text-gray-700">
+                  IP Address *
+                </label>
                 <div className="relative">
-                  <FiGlobe className="absolute left-3 top-3 text-gray-500" size={16} />
+                  <FiGlobe
+                    className="absolute left-3 top-3 text-gray-500"
+                    size={16}
+                  />
                   <input
                     type="text"
                     value={formData.ipAddress}
                     onChange={(e) => handleChange("ipAddress", e.target.value)}
                     placeholder="192.168.1.1"
-                    className={`w-full pl-10 pr-4 py-2.5 border rounded-lg ${errors.ipAddress ? "border-red-500" : "border-gray-300"}`}
+                    className={`w-full pl-10 pr-4 py-2.5 border rounded-lg ${
+                      errors.ipAddress ? "border-red-500" : "border-gray-300"
+                    }`}
                   />
                 </div>
+                {errors.ipAddress && (
+                  <p className="text-red-600 text-sm mt-1 flex items-center gap-1">
+                    <FiAlertCircle size={14} />
+                    {errors.ipAddress}
+                  </p>
+                )}
               </div>
 
               <div className="bg-white">
-                <label className="block text-sm font-medium mb-1 text-gray-700">Output IP:Port *</label>
+                <label className="block text-sm font-medium mb-1 text-gray-700">
+                  Output IP:Port *
+                </label>
                 <div className="relative">
-                  <FiCpu className="absolute left-3 top-3 text-gray-500" size={16} />
+                  <FiCpu
+                    className="absolute left-3 top-3 text-gray-500"
+                    size={16}
+                  />
                   <input
                     type="text"
                     value={formData.originIpWithPort}
-                    onChange={(e) => handleChange("originIpWithPort", e.target.value)}
+                    onChange={(e) =>
+                      handleChange("originIpWithPort", e.target.value)
+                    }
                     placeholder="192.168.1.1:8080"
                     className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg"
                   />
@@ -286,30 +366,43 @@ export function ServerForm({
               </div>
             </div>
 
+            {/* RIGHT COLUMN */}
             <div className="space-y-6">
               <div className="sticky top-0 bg-white pb-2">
                 <h3 className="text-md font-semibold uppercase text-gray-700 tracking-wider border-b-2 border-green-500 pb-2 inline-block">
                   SSH Configuration
                 </h3>
               </div>
-              
+
               <div className="bg-white">
-                <label className="block text-sm font-medium mb-1 text-gray-700">SSH Port *</label>
+                <label className="block text-sm font-medium mb-1 text-gray-700">
+                  SSH Port *
+                </label>
                 <div className="relative">
-                  <FiTerminal className="absolute left-3 top-3 text-gray-500" size={16} />
+                  <FiTerminal
+                    className="absolute left-3 top-3 text-gray-500"
+                    size={16}
+                  />
                   <input
                     type="number"
                     value={formData.sshPort}
-                    onChange={(e) => handleChange("sshPort", parseInt(e.target.value) || 22)}
+                    onChange={(e) =>
+                      handleChange("sshPort", parseInt(e.target.value) || 22)
+                    }
                     className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg"
                   />
                 </div>
               </div>
 
               <div className="bg-white">
-                <label className="block text-sm font-medium mb-1 text-gray-700">SSH Username *</label>
+                <label className="block text-sm font-medium mb-1 text-gray-700">
+                  SSH Username *
+                </label>
                 <div className="relative">
-                  <FiUser className="absolute left-3 top-3 text-gray-500" size={16} />
+                  <FiUser
+                    className="absolute left-3 top-3 text-gray-500"
+                    size={16}
+                  />
                   <input
                     type="text"
                     value={formData.sshUsername}
@@ -317,12 +410,23 @@ export function ServerForm({
                     className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg"
                   />
                 </div>
+                {errors.sshUsername && (
+                  <p className="text-red-600 text-sm mt-1 flex items-center gap-1">
+                    <FiAlertCircle size={14} />
+                    {errors.sshUsername}
+                  </p>
+                )}
               </div>
 
               <div className="bg-white">
-                <label className="block text-sm font-medium mb-1 text-gray-700">SSH Password *</label>
+                <label className="block text-sm font-medium mb-1 text-gray-700">
+                  SSH Password *
+                </label>
                 <div className="relative">
-                  <FiLock className="absolute left-3 top-3 text-gray-500" size={16} />
+                  <FiLock
+                    className="absolute left-3 top-3 text-gray-500"
+                    size={16}
+                  />
                   <input
                     type="password"
                     value={formData.sshPassword}
@@ -330,6 +434,12 @@ export function ServerForm({
                     className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg"
                   />
                 </div>
+                {errors.sshPassword && (
+                  <p className="text-red-600 text-sm mt-1 flex items-center gap-1">
+                    <FiAlertCircle size={14} />
+                    {errors.sshPassword}
+                  </p>
+                )}
               </div>
 
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-5 mt-4">
@@ -338,17 +448,27 @@ export function ServerForm({
                 </h4>
                 <ul className="text-xs text-blue-700 space-y-1">
                   <li>• SSH credentials are used to fetch /etc/nimble/rules.conf</li>
-                  <li>• Homepage lo &quot;Reload&quot; button press chesinappudu rules.conf fetch avutundi</li>
+                  <li>
+                    • Homepage lo &quot;Reload&quot; button press chesinappudu
+                    rules.conf fetch avutundi
+                  </li>
                 </ul>
               </div>
             </div>
           </div>
 
           <div className="flex justify-end gap-3 mt-8 pt-6 border-t border-gray-200 sticky bottom-0 bg-white">
-            <button type="button" onClick={onClose} className="px-6 py-2.5 border border-gray-300 rounded-lg hover:bg-gray-50">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-6 py-2.5 border border-gray-300 rounded-lg hover:bg-gray-50"
+            >
               Cancel
             </button>
-            <button type="submit" className="px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-md">
+            <button
+              type="submit"
+              className="px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-md"
+            >
               <FiPlus size={18} className="inline mr-2" />
               {initialValues ? "Update Server" : "Create Server"}
             </button>

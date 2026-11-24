@@ -2,8 +2,8 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { 
-  FiTrash2, 
+import {
+  FiTrash2,
   FiEdit,
   FiPlus,
   FiActivity,
@@ -11,7 +11,7 @@ import {
   FiX,
   FiRefreshCw,
   FiAlertCircle,
-  FiInfo
+  FiInfo,
 } from "react-icons/fi";
 import { ServerForm } from "./ServerForm";
 import ServiceRestartModal from "./ServiceRestartModal";
@@ -31,7 +31,6 @@ interface Server {
   sshPassword?: string;
 }
 
-// Define interface for API response
 interface ServerApiResponse {
   success: boolean;
   servers?: Server[];
@@ -40,7 +39,6 @@ interface ServerApiResponse {
   server?: Server;
 }
 
-// Define interface for server form data
 interface ServerFormData {
   displayName: string;
   ipAddress: string;
@@ -64,7 +62,7 @@ const ServersPageContent = () => {
   const [isRestarting, setIsRestarting] = useState(false);
   const [isServiceModalOpen, setIsServiceModalOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
-  
+
   const [deleteModal, setDeleteModal] = useState<{
     isOpen: boolean;
     serverId: number | null;
@@ -72,19 +70,19 @@ const ServersPageContent = () => {
   }>({
     isOpen: false,
     serverId: null,
-    serverName: ""
+    serverName: "",
   });
 
   const [successModal, setSuccessModal] = useState<{
     isOpen: boolean;
     title: string;
     message: string;
-    type: 'success' | 'error' | 'info';
+    type: "success" | "error" | "info";
   }>({
     isOpen: false,
     title: "",
     message: "",
-    type: 'success'
+    type: "success",
   });
 
   const [restartResultsModal, setRestartResultsModal] = useState<{
@@ -98,27 +96,34 @@ const ServersPageContent = () => {
   }>({
     isOpen: false,
     serviceName: "",
-    results: []
+    results: [],
   });
 
-  // Define fetchServers with useCallback
+  const showSuccessMessage = (
+    title: string,
+    message: string,
+    type: "success" | "error" | "info" = "success"
+  ) => {
+    setSuccessModal({ isOpen: true, title, message, type });
+  };
+
   const fetchServers = useCallback(async () => {
     setIsLoading(true);
     try {
-      const response = await fetch('/api/servers');
+      const response = await fetch("/api/servers");
       const data: ServerApiResponse = await response.json();
-      
+
       console.log("Fetched servers:", data);
-      
+
       if (data.success && data.servers) {
-        // Ensure status is one of the allowed values
         const validatedServers = data.servers.map((server: Server) => ({
           ...server,
-          status: server.status === "online" || server.status === "offline" 
-            ? server.status 
-            : "unknown" as const
+          status:
+            server.status === "online" || server.status === "offline"
+              ? server.status
+              : ("unknown" as const),
         }));
-        
+
         setServers(validatedServers);
         setFilteredServers(validatedServers);
       } else {
@@ -126,13 +131,12 @@ const ServersPageContent = () => {
       }
     } catch {
       console.error("Error fetching servers");
-      showSuccessMessage("Error", "Failed to load servers", 'error');
+      showSuccessMessage("Error", "Failed to load servers", "error");
     } finally {
       setIsLoading(false);
     }
   }, []);
 
-  // Load servers from API on mount
   useEffect(() => {
     setIsClient(true);
     fetchServers();
@@ -142,47 +146,36 @@ const ServersPageContent = () => {
     setFilteredServers(servers);
   }, [servers]);
 
-  const showSuccessMessage = (title: string, message: string, type: 'success' | 'error' | 'info' = 'success') => {
-    setSuccessModal({
-      isOpen: true,
-      title,
-      message,
-      type
-    });
-  };
-
   const closeSuccessMessage = () => {
-    setSuccessModal({
-      isOpen: false,
-      title: "",
-      message: "",
-      type: 'success'
-    });
+    setSuccessModal({ isOpen: false, title: "", message: "", type: "success" });
   };
 
   const toggleServerSelection = (serverId: number) => {
-    setSelectedServerIds(prev => 
-      prev.includes(serverId) 
-        ? prev.filter(id => id !== serverId)
+    setSelectedServerIds((prev) =>
+      prev.includes(serverId)
+        ? prev.filter((id) => id !== serverId)
         : [...prev, serverId]
     );
   };
 
   const selectAllServers = () => {
-    if (selectedServerIds.length === filteredServers.length && filteredServers.length > 0) {
+    if (
+      selectedServerIds.length === filteredServers.length &&
+      filteredServers.length > 0
+    ) {
       setSelectedServerIds([]);
     } else {
-      setSelectedServerIds(filteredServers.map(server => server.id));
+      setSelectedServerIds(filteredServers.map((server) => server.id));
     }
   };
 
-  const selectedServers = servers.filter(server => 
+  const selectedServers = servers.filter((server) =>
     selectedServerIds.includes(server.id)
   );
 
   const handleServiceRestart = async (serviceName: string) => {
     setIsRestarting(true);
-    
+
     try {
       const results = await Promise.all(
         selectedServers.map(async (server) => {
@@ -200,105 +193,105 @@ const ServersPageContent = () => {
                 serviceName: serviceName,
               }),
             });
-            
+
             const data = await res.json();
-            
+
             console.log(`Restart result for ${server.displayName}:`, data);
-            
-            // IMPORTANT: data.success ని check చేయండి
+
             return {
-              success: data.success === true,  // ఇది true అవ్వాలి
-              output: data.output || data.message || data.error || "No output",
+              success: data.success === true,
+              output:
+                data.output || data.message || data.error || "No output",
               serverName: server.displayName,
-              serverId: server.id
+              serverId: server.id,
             };
           } catch (error: unknown) {
             console.error(`Error for ${server.displayName}:`, error);
-            
-            let errorMessage = 'Unknown error';
-            
+
+            let errorMessage = "Unknown error";
+
             if (error instanceof Error) {
               errorMessage = error.message;
-            } else if (typeof error === 'string') {
+            } else if (typeof error === "string") {
               errorMessage = error;
-            } else if (error && typeof error === 'object' && 'message' in error && typeof (error as Record<string, unknown>).message === 'string') {
+            } else if (
+              error &&
+              typeof error === "object" &&
+              "message" in error &&
+              typeof (error as Record<string, unknown>).message === "string"
+            ) {
               errorMessage = (error as { message: string }).message;
             }
-            
+
             return {
               success: false,
               output: `Connection failed: ${errorMessage}`,
               serverName: server.displayName,
-              serverId: server.id
+              serverId: server.id,
             };
           }
         })
       );
 
-      // Show results modal
       setRestartResultsModal({
         isOpen: true,
         serviceName,
-        results
+        results,
       });
 
-      // Update server statuses based on results
-      const updatedServers: Server[] = servers.map(server => {
+      const updatedServers: Server[] = servers.map((server) => {
         if (selectedServerIds.includes(server.id)) {
-          const result = results.find(r => r.serverId === server.id);
-          
-          // If success is true, set status to "online", otherwise "offline"
-          const newStatus: Server['status'] = result?.success ? "online" : "offline";
-          
-          console.log(`Updating ${server.displayName} status to ${newStatus} (success: ${result?.success})`);
-          
+          const result = results.find((r) => r.serverId === server.id);
+          const newStatus: Server["status"] = result?.success
+            ? "online"
+            : "offline";
+
           return {
             ...server,
             status: newStatus,
-            lastChecked: new Date().toLocaleString()
+            lastChecked: new Date().toLocaleString(),
           };
         }
         return server;
       });
-      
-      // ఇక్కడే servers ని update చేయండి
+
       setServers(updatedServers);
       setSelectedServerIds([]);
       setIsServiceModalOpen(false);
-      
-      // Update all servers' status in backend
+
       for (const server of updatedServers) {
         if (selectedServerIds.includes(server.id)) {
-          await fetch('/api/servers', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-              action: 'update', 
-              server: { 
-                id: server.id, 
+          await fetch("/api/servers", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: "update",
+              server: {
+                id: server.id,
                 status: server.status,
-                lastChecked: server.lastChecked
-              } 
-            })
-          }).catch(err => console.error(`Failed to update server ${server.id} status:`, err));
+                lastChecked: server.lastChecked,
+              },
+            }),
+          }).catch((err) =>
+            console.error(`Failed to update server ${server.id} status:`, err)
+          );
         }
       }
-      
     } catch (error: unknown) {
       console.error("Service restart failed:", error);
-      
-      let errorMessage = 'Unknown error';
-      
+
+      let errorMessage = "Unknown error";
+
       if (error instanceof Error) {
         errorMessage = error.message;
-      } else if (typeof error === 'string') {
+      } else if (typeof error === "string") {
         errorMessage = error;
       }
-      
+
       showSuccessMessage(
         "Service Restart Failed",
         `Service restart failed: ${errorMessage}`,
-        'error'
+        "error"
       );
     } finally {
       setIsRestarting(false);
@@ -309,31 +302,44 @@ const ServersPageContent = () => {
     setIsAddModalOpen(true);
   };
 
+  // ✅ Create — ServerForm ఇప్పుడు parentServerId లో displayName పంపుతుంది
   const handleCreateServer = async (serverData: ServerFormData) => {
     try {
-      const response = await fetch('/api/servers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          action: 'create', 
-          server: serverData 
-        })
+      // Edge server అయితే parentServer field కూడా పంపుతున్నాం (backend compatibility కోసం)
+      const payload = {
+        ...serverData,
+        parentServer:
+          serverData.serverType === "edge"
+            ? serverData.parentServerId || "None"
+            : "None",
+      };
+
+      console.log("Create payload:", payload);
+
+      const response = await fetch("/api/servers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "create", server: payload }),
       });
 
       const data: ServerApiResponse = await response.json();
-      
+
       if (data.success) {
         await fetchServers();
         setIsAddModalOpen(false);
         showSuccessMessage(
           "Server Created",
-          `Server &quot;${serverData.displayName}&quot; created successfully!`
+          `Server "${serverData.displayName}" created successfully!`
         );
       } else {
-        showSuccessMessage("Error", data.error || "Failed to create server", 'error');
+        showSuccessMessage(
+          "Error",
+          data.error || "Failed to create server",
+          "error"
+        );
       }
     } catch {
-      showSuccessMessage("Error", "Failed to create server", 'error');
+      showSuccessMessage("Error", "Failed to create server", "error");
     }
   };
 
@@ -342,96 +348,107 @@ const ServersPageContent = () => {
     setIsEditModalOpen(true);
   };
 
+  // ✅ Update — parentServer కూడా displayName గా save అవుతుంది
   const handleUpdateServer = async (serverData: ServerFormData) => {
     if (!editingServer) return;
-    
+
     try {
-      const response = await fetch('/api/servers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          action: 'update', 
-          server: { id: editingServer.id, ...serverData }
-        })
+      const payload = {
+        id: editingServer.id,
+        ...serverData,
+        parentServer:
+          serverData.serverType === "edge"
+            ? serverData.parentServerId || "None"
+            : "None",
+      };
+
+      console.log("Update payload:", payload);
+
+      const response = await fetch("/api/servers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "update",
+          server: payload,
+        }),
       });
 
       const data: ServerApiResponse = await response.json();
-      
+
       if (data.success) {
         await fetchServers();
         setEditingServer(null);
         setIsEditModalOpen(false);
         showSuccessMessage(
           "Server Updated",
-          `Server &quot;${serverData.displayName}&quot; updated successfully!`
+          `Server "${serverData.displayName}" updated successfully!`
         );
       } else {
-        showSuccessMessage("Error", data.error || "Failed to update server", 'error');
+        showSuccessMessage(
+          "Error",
+          data.error || "Failed to update server",
+          "error"
+        );
       }
     } catch {
-      showSuccessMessage("Error", "Failed to update server", 'error');
+      showSuccessMessage("Error", "Failed to update server", "error");
     }
   };
 
   const showDeleteConfirmation = (id: number, name: string) => {
-    setDeleteModal({
-      isOpen: true,
-      serverId: id,
-      serverName: name
-    });
+    setDeleteModal({ isOpen: true, serverId: id, serverName: name });
   };
 
   const closeDeleteConfirmation = () => {
-    setDeleteModal({
-      isOpen: false,
-      serverId: null,
-      serverName: ""
-    });
+    setDeleteModal({ isOpen: false, serverId: null, serverName: "" });
   };
 
   const handleDeleteServer = async () => {
     if (deleteModal.serverId) {
       try {
-        const response = await fetch(`/api/servers?id=${deleteModal.serverId}`, {
-          method: 'DELETE'
-        });
+        const response = await fetch(
+          `/api/servers?id=${deleteModal.serverId}`,
+          { method: "DELETE" }
+        );
 
         const data: ServerApiResponse = await response.json();
-        
+
         if (data.success) {
           await fetchServers();
-          setSelectedServerIds(prev => prev.filter(id => id !== deleteModal.serverId));
+          setSelectedServerIds((prev) =>
+            prev.filter((id) => id !== deleteModal.serverId)
+          );
           closeDeleteConfirmation();
           showSuccessMessage(
             "Server Deleted",
-            `Server &quot;${deleteModal.serverName}&quot; deleted successfully!`
+            `Server "${deleteModal.serverName}" deleted successfully!`
           );
         } else {
-          showSuccessMessage("Error", data.error || "Failed to delete server", 'error');
+          showSuccessMessage(
+            "Error",
+            data.error || "Failed to delete server",
+            "error"
+          );
         }
       } catch {
-        showSuccessMessage("Error", "Failed to delete server", 'error');
+        showSuccessMessage("Error", "Failed to delete server", "error");
       }
     }
   };
 
   const closeRestartResults = () => {
-    setRestartResultsModal({
-      isOpen: false,
-      serviceName: "",
-      results: []
-    });
+    setRestartResultsModal({ isOpen: false, serviceName: "", results: [] });
   };
 
   const handleCheckHealth = () => {
     showSuccessMessage(
       "Health Check",
       "Server health check initiated!",
-      'info'
+      "info"
     );
   };
 
-  const StatusBadge = ({ status }: { status: Server['status'] }) => {
+  const StatusBadge = ({ status }: { status: Server["status"] }) => {
     switch (status) {
       case "online":
         return (
@@ -454,6 +471,24 @@ const ServersPageContent = () => {
     }
   };
 
+  // ✅ Edit form కోసం parentServerId ను తిరిగి ID గా convert చేసే helper
+  // ఎందుకంటే dropdown లో value = id, కానీ DB లో parentServer = displayName
+  const getParentServerIdForEdit = (server: Server): string | undefined => {
+    if (
+      server.serverType !== "edge" ||
+      !server.parentServer ||
+      server.parentServer === "None"
+    ) {
+      return undefined;
+    }
+    // parentServer లో displayName ఉంది — దాన్ని match చేసి ID తీసుకోండి
+    const parent = servers.find(
+      (srv) =>
+        srv.displayName === server.parentServer && srv.serverType === "origin"
+    );
+    return parent ? String(parent.id) : undefined;
+  };
+
   if (!isClient || isLoading) {
     return (
       <div className="min-h-screen bg-gray-900 pt-24 px-6 py-6">
@@ -473,10 +508,10 @@ const ServersPageContent = () => {
       <div className="pt-24 px-6 py-6">
         <div className="flex justify-between items-center mb-8">
           <h1 className="text-3xl font-bold text-white">Servers</h1>
-          
+
           <div className="flex gap-3">
             {selectedServers.length > 0 && (
-              <button 
+              <button
                 onClick={() => setIsServiceModalOpen(true)}
                 className="flex items-center gap-2 px-5 py-3 rounded-lg bg-green-600 hover:bg-green-700 transition-colors text-white font-medium shadow-sm"
               >
@@ -484,8 +519,8 @@ const ServersPageContent = () => {
                 <span>Service Restart ({selectedServers.length})</span>
               </button>
             )}
-            
-            <button 
+
+            <button
               onClick={handleAddServer}
               className="flex items-center gap-2 px-5 py-3 rounded-lg bg-blue-600 hover:bg-blue-700 transition-colors text-white font-medium shadow-sm"
             >
@@ -500,19 +535,23 @@ const ServersPageContent = () => {
             Total Servers: <span className="font-semibold">{servers.length}</span>
             {selectedServers.length > 0 && (
               <span className="ml-4">
-                Selected: <span className="font-semibold text-blue-300">{selectedServers.length}</span>
+                Selected:{" "}
+                <span className="font-semibold text-blue-300">
+                  {selectedServers.length}
+                </span>
               </span>
             )}
           </div>
-          
+
           {filteredServers.length > 0 && (
             <button
               onClick={selectAllServers}
               className="text-sm text-blue-400 hover:text-blue-300"
             >
-              {selectedServerIds.length === filteredServers.length && filteredServers.length > 0
-                ? 'Deselect All'
-                : 'Select All'}
+              {selectedServerIds.length === filteredServers.length &&
+              filteredServers.length > 0
+                ? "Deselect All"
+                : "Select All"}
             </button>
           )}
         </div>
@@ -525,39 +564,68 @@ const ServersPageContent = () => {
                   <th className="px-4 py-3 text-left font-medium border-b border-gray-700 w-12">
                     <input
                       type="checkbox"
-                      checked={selectedServerIds.length === filteredServers.length && filteredServers.length > 0}
+                      checked={
+                        selectedServerIds.length === filteredServers.length &&
+                        filteredServers.length > 0
+                      }
                       onChange={selectAllServers}
                       className="h-4 w-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-500"
                     />
                   </th>
-                  <th className="px-4 py-3 text-left font-medium border-b border-gray-700">Display Name</th>
-                  <th className="px-4 py-3 text-left font-medium border-b border-gray-700">Server Type</th>
-                  <th className="px-4 py-3 text-left font-medium border-b border-gray-700">Parent Server</th>
-                  <th className="px-4 py-3 text-left font-medium border-b border-gray-700">IP Address</th>
-                  <th className="px-4 py-3 text-left font-medium border-b border-gray-700">Port (Listening)</th>
-                  <th className="px-4 py-3 text-left font-medium border-b border-gray-700">Output IP:Port</th>
-                  <th className="px-4 py-3 text-left font-medium border-b border-gray-700">Status</th>
-                  <th className="px-4 py-3 text-left font-medium border-b border-gray-700">Last Checked</th>
-                  <th className="px-4 py-3 text-left font-medium border-b border-gray-700">Actions</th>
+                  <th className="px-4 py-3 text-left font-medium border-b border-gray-700">
+                    Display Name
+                  </th>
+                  <th className="px-4 py-3 text-left font-medium border-b border-gray-700">
+                    Server Type
+                  </th>
+                  <th className="px-4 py-3 text-left font-medium border-b border-gray-700">
+                    Parent Server
+                  </th>
+                  <th className="px-4 py-3 text-left font-medium border-b border-gray-700">
+                    IP Address
+                  </th>
+                  <th className="px-4 py-3 text-left font-medium border-b border-gray-700">
+                    Port (Listening)
+                  </th>
+                  <th className="px-4 py-3 text-left font-medium border-b border-gray-700">
+                    Output IP:Port
+                  </th>
+                  <th className="px-4 py-3 text-left font-medium border-b border-gray-700">
+                    Status
+                  </th>
+                  <th className="px-4 py-3 text-left font-medium border-b border-gray-700">
+                    Last Checked
+                  </th>
+                  <th className="px-4 py-3 text-left font-medium border-b border-gray-700">
+                    Actions
+                  </th>
                 </tr>
               </thead>
 
               <tbody>
                 {filteredServers.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="px-4 py-12 text-center text-gray-400">
+                    <td
+                      colSpan={10}
+                      className="px-4 py-12 text-center text-gray-400"
+                    >
                       <div className="flex flex-col items-center justify-center">
                         <div className="text-lg mb-2">No servers found</div>
-                        <div className="text-sm">Click &quot;Add Server&quot; to create your first server</div>
+                        <div className="text-sm">
+                          Click &quot;Add Server&quot; to create your first
+                          server
+                        </div>
                       </div>
                     </td>
                   </tr>
                 ) : (
                   filteredServers.map((server) => (
-                    <tr 
-                      key={server.id} 
+                    <tr
+                      key={server.id}
                       className={`border-b border-gray-700 hover:bg-gray-750 transition-colors ${
-                        selectedServerIds.includes(server.id) ? 'bg-gray-750' : ''
+                        selectedServerIds.includes(server.id)
+                          ? "bg-gray-750"
+                          : ""
                       }`}
                     >
                       <td className="px-4 py-3">
@@ -568,18 +636,26 @@ const ServersPageContent = () => {
                           className="h-4 w-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-500"
                         />
                       </td>
-                      <td className="px-4 py-3 font-medium text-white">{server.displayName}</td>
+                      <td className="px-4 py-3 font-medium text-white">
+                        {server.displayName}
+                      </td>
                       <td className="px-4 py-3">
-                        <span className={`px-3 py-1 rounded text-xs font-medium ${
-                          server.serverType === 'origin' 
-                            ? 'bg-purple-900/50 text-purple-300' 
-                            : 'bg-blue-900/50 text-blue-300'
-                        }`}>
-                          {server.serverType === 'origin' ? 'Origin' : 'Edge'}
+                        <span
+                          className={`px-3 py-1 rounded text-xs font-medium ${
+                            server.serverType === "origin"
+                              ? "bg-purple-900/50 text-purple-300"
+                              : "bg-blue-900/50 text-blue-300"
+                          }`}
+                        >
+                          {server.serverType === "origin" ? "Origin" : "Edge"}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-gray-300">{server.parentServer || "None"}</td>
-                      <td className="px-4 py-3 font-mono text-green-300">{server.ipAddress}</td>
+                      <td className="px-4 py-3 text-gray-300">
+                        {server.parentServer || "None"}
+                      </td>
+                      <td className="px-4 py-3 font-mono text-green-300">
+                        {server.ipAddress}
+                      </td>
                       <td className="px-4 py-3 font-mono text-gray-300">
                         {server.port}
                         {server.sshPort && server.sshPort !== 22 && (
@@ -588,29 +664,38 @@ const ServersPageContent = () => {
                           </span>
                         )}
                       </td>
-                      <td className="px-4 py-3 font-mono text-blue-300">{server.outputIpPort}</td>
+                      <td className="px-4 py-3 font-mono text-blue-300">
+                        {server.outputIpPort}
+                      </td>
                       <td className="px-4 py-3">
                         <StatusBadge status={server.status} />
                       </td>
-                      <td className="px-4 py-3 text-gray-300 text-sm">{server.lastChecked}</td>
+                      <td className="px-4 py-3 text-gray-300 text-sm">
+                        {server.lastChecked}
+                      </td>
                       <td className="px-4 py-3">
                         <div className="flex gap-2">
-                          <button 
+                          <button
                             onClick={handleCheckHealth}
                             className="p-2 hover:bg-gray-700 rounded transition-colors"
                             title="Check Health"
                           >
                             <FiActivity className="text-green-400" />
                           </button>
-                          <button 
+                          <button
                             onClick={() => handleEditServer(server)}
                             className="p-2 hover:bg-gray-700 rounded transition-colors"
                             title="Edit"
                           >
                             <FiEdit className="text-blue-400" />
                           </button>
-                          <button 
-                            onClick={() => showDeleteConfirmation(server.id, server.displayName)}
+                          <button
+                            onClick={() =>
+                              showDeleteConfirmation(
+                                server.id,
+                                server.displayName
+                              )
+                            }
                             className="p-2 hover:bg-red-900/30 rounded transition-colors"
                             title="Delete"
                           >
@@ -628,9 +713,7 @@ const ServersPageContent = () => {
           {filteredServers.length > 0 && (
             <div className="mt-[23rem]">
               <div className="flex flex-wrap justify-between items-center p-4 border-t border-gray-700">
-                <div className="text-sm text-gray-400">
-                  Page 1 of 1
-                </div>
+                <div className="text-sm text-gray-400">Page 1 of 1</div>
                 <div className="text-sm text-gray-400">
                   Showing {filteredServers.length} servers
                 </div>
@@ -647,9 +730,10 @@ const ServersPageContent = () => {
         title="Add New Server"
         onSubmit={handleCreateServer}
         initialValues={undefined}
+        servers={servers}
       />
 
-      {/* Edit Server Modal */}
+      {/* ✅ Edit Server Modal — parentServer (displayName) ను ID గా convert చేసి pass చేస్తున్నాం */}
       {editingServer && (
         <ServerForm
           opened={isEditModalOpen}
@@ -659,6 +743,7 @@ const ServersPageContent = () => {
           }}
           title="Edit Server"
           onSubmit={handleUpdateServer}
+          servers={servers}
           initialValues={{
             displayName: editingServer.displayName,
             ipAddress: editingServer.ipAddress,
@@ -668,7 +753,8 @@ const ServersPageContent = () => {
             sshPort: editingServer.sshPort || 22,
             originIpWithPort: editingServer.outputIpPort,
             serverType: editingServer.serverType,
-            parentServerId: editingServer.parentServer !== "None" ? editingServer.parentServer : undefined,
+            // ✅ parentServer (displayName) → parentServerId (id) కి convert
+            parentServerId: getParentServerIdForEdit(editingServer),
           }}
         />
       )}
@@ -691,17 +777,25 @@ const ServersPageContent = () => {
                 <FiAlertCircle className="text-red-400 text-xl" />
               </div>
               <div>
-                <h3 className="text-lg font-bold text-white">Confirm Delete</h3>
-                <p className="text-gray-300 text-sm mt-1">This action cannot be undone</p>
+                <h3 className="text-lg font-bold text-white">
+                  Confirm Delete
+                </h3>
+                <p className="text-gray-300 text-sm mt-1">
+                  This action cannot be undone
+                </p>
               </div>
             </div>
-            
+
             <div className="mb-6">
               <p className="text-gray-300">
-                Are you sure you want to delete server <span className="font-semibold text-red-300">&quot;{deleteModal.serverName}&quot;</span>?
+                Are you sure you want to delete server{" "}
+                <span className="font-semibold text-red-300">
+                  &quot;{deleteModal.serverName}&quot;
+                </span>
+                ?
               </p>
             </div>
-            
+
             <div className="flex justify-end gap-3">
               <button
                 onClick={closeDeleteConfirmation}
@@ -723,57 +817,68 @@ const ServersPageContent = () => {
       {/* Success/Error Message Modal */}
       {successModal.isOpen && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className={`rounded-lg p-6 w-full max-w-md border ${
-            successModal.type === 'success' 
-              ? 'bg-gray-800 border-green-700' 
-              : successModal.type === 'error'
-                ? 'bg-gray-800 border-red-700'
-                : 'bg-gray-800 border-blue-700'
-          }`}>
+          <div
+            className={`rounded-lg p-6 w-full max-w-md border ${
+              successModal.type === "success"
+                ? "bg-gray-800 border-green-700"
+                : successModal.type === "error"
+                ? "bg-gray-800 border-red-700"
+                : "bg-gray-800 border-blue-700"
+            }`}
+          >
             <div className="flex items-center gap-3 mb-4">
-              <div className={`p-2 rounded-full ${
-                successModal.type === 'success' 
-                  ? 'bg-green-900/30' 
-                  : successModal.type === 'error'
-                    ? 'bg-red-900/30'
-                    : 'bg-blue-900/30'
-              }`}>
-                {successModal.type === 'success' ? (
+              <div
+                className={`p-2 rounded-full ${
+                  successModal.type === "success"
+                    ? "bg-green-900/30"
+                    : successModal.type === "error"
+                    ? "bg-red-900/30"
+                    : "bg-blue-900/30"
+                }`}
+              >
+                {successModal.type === "success" ? (
                   <FiCheck className="text-green-400 text-xl" />
-                ) : successModal.type === 'error' ? (
+                ) : successModal.type === "error" ? (
                   <FiAlertCircle className="text-red-400 text-xl" />
                 ) : (
                   <FiInfo className="text-blue-400 text-xl" />
                 )}
               </div>
               <div>
-                <h3 className="text-lg font-bold text-white">{successModal.title}</h3>
-                <p className={`text-sm mt-1 ${
-                  successModal.type === 'success' 
-                    ? 'text-green-300' 
-                    : successModal.type === 'error'
-                      ? 'text-red-300'
-                      : 'text-blue-300'
-                }`}>
-                  {successModal.type === 'success' ? 'Success' : 
-                   successModal.type === 'error' ? 'Error' : 'Information'}
+                <h3 className="text-lg font-bold text-white">
+                  {successModal.title}
+                </h3>
+                <p
+                  className={`text-sm mt-1 ${
+                    successModal.type === "success"
+                      ? "text-green-300"
+                      : successModal.type === "error"
+                      ? "text-red-300"
+                      : "text-blue-300"
+                  }`}
+                >
+                  {successModal.type === "success"
+                    ? "Success"
+                    : successModal.type === "error"
+                    ? "Error"
+                    : "Information"}
                 </p>
               </div>
             </div>
-            
+
             <div className="mb-6">
               <p className="text-gray-300">{successModal.message}</p>
             </div>
-            
+
             <div className="flex justify-end">
               <button
                 onClick={closeSuccessMessage}
                 className={`px-5 py-2 rounded-lg transition-colors text-white font-medium ${
-                  successModal.type === 'success' 
-                    ? 'bg-green-600 hover:bg-green-700' 
-                    : successModal.type === 'error'
-                      ? 'bg-red-600 hover:bg-red-700'
-                      : 'bg-blue-600 hover:bg-blue-700'
+                  successModal.type === "success"
+                    ? "bg-green-600 hover:bg-green-700"
+                    : successModal.type === "error"
+                    ? "bg-red-600 hover:bg-red-700"
+                    : "bg-blue-600 hover:bg-blue-700"
                 }`}
               >
                 OK
@@ -793,8 +898,9 @@ const ServersPageContent = () => {
                   <FiRefreshCw className="text-blue-400 text-xl" />
                 </div>
                 <div>
-                  <h3 className="text-lg font-bold text-white">Service Restart Results</h3>
-                  {/* <p className="text-blue-300 text-sm">Service: {restartResultsModal.serviceName}</p> */}
+                  <h3 className="text-lg font-bold text-white">
+                    Service Restart Results
+                  </h3>
                 </div>
               </div>
               <button
@@ -804,33 +910,39 @@ const ServersPageContent = () => {
                 <FiX className="text-gray-400" />
               </button>
             </div>
-            
+
             <div className="flex-grow overflow-y-auto mb-4">
               <div className="space-y-3">
                 {restartResultsModal.results.map((result, index) => (
-                  <div 
-                    key={index} 
+                  <div
+                    key={index}
                     className={`p-4 rounded border ${
-                      result.success 
-                        ? 'border-green-700 bg-green-900/20' 
-                        : 'border-red-700 bg-red-900/20'
+                      result.success
+                        ? "border-green-700 bg-green-900/20"
+                        : "border-red-700 bg-red-900/20"
                     }`}
                   >
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2">
-                        <span className={`text-lg ${
-                          result.success ? 'text-green-400' : 'text-red-400'
-                        }`}>
-                          {result.success ? '✓' : '✗'}
+                        <span
+                          className={`text-lg ${
+                            result.success ? "text-green-400" : "text-red-400"
+                          }`}
+                        >
+                          {result.success ? "✓" : "✗"}
                         </span>
-                        <span className="font-medium text-white">{result.serverName}</span>
+                        <span className="font-medium text-white">
+                          {result.serverName}
+                        </span>
                       </div>
-                      <span className={`px-3 py-1 rounded text-xs font-medium ${
-                        result.success 
-                          ? 'bg-green-900/50 text-green-300' 
-                          : 'bg-red-900/50 text-red-300'
-                      }`}>
-                        {result.success ? 'Success' : 'Failed'}
+                      <span
+                        className={`px-3 py-1 rounded text-xs font-medium ${
+                          result.success
+                            ? "bg-green-900/50 text-green-300"
+                            : "bg-red-900/50 text-red-300"
+                        }`}
+                      >
+                        {result.success ? "Success" : "Failed"}
                       </span>
                     </div>
                     <p className="text-gray-300 text-sm font-mono bg-black/30 p-2 rounded">
@@ -840,7 +952,7 @@ const ServersPageContent = () => {
                 ))}
               </div>
             </div>
-            
+
             <div className="flex justify-end">
               <button
                 onClick={closeRestartResults}
@@ -857,4 +969,3 @@ const ServersPageContent = () => {
 };
 
 export default ServersPageContent;
-
