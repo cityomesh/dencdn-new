@@ -61,10 +61,6 @@ interface BulkDeleteModalProps {
   isLoading: boolean;
 }
 
-const CACHE_KEY = "homepage_assignments_cache";
-const CACHE_TIMESTAMP_KEY = "homepage_assignments_timestamp";
-const CACHE_MAX_AGE_MS = 10 * 60 * 1000;
-
 const BulkDeleteModal = ({
   isOpen,
   onClose,
@@ -133,23 +129,16 @@ const BulkDeleteModal = ({
 };
 
 const Homepage = () => {
-  // ✅ FIXED: assignments ఇప్పుడు [] తో మొదలవుతుంది (server + client same)
-  // Cache ని useEffect లో load చేస్తాం
-  const [assignments, setAssignments] = useState<RouteAssignment[]>([]);
-  const [lastReloadTime, setLastReloadTime] = useState<string>("Never");
-
-  // ✅✅✅ HYDRATION FIX: mounted state — cache ని client-side only లో load చేయడానికి
-  const [mounted, setMounted] = useState(false);
-
   const [search, setSearch] = useState("");
   const [stream, setStream] = useState("all");
   const [selectedSourceServer, setSelectedSourceServer] = useState<string>("all");
+  const [assignments, setAssignments] = useState<RouteAssignment[]>([]);
   const [filteredAssignments, setFilteredAssignments] = useState<RouteAssignment[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(100);
   const [isLoading, setIsLoading] = useState(false);
-  const [isBackgroundFetching, setIsBackgroundFetching] = useState(false);
   const [servers, setServers] = useState<Server[]>([]);
+  const [lastReloadTime, setLastReloadTime] = useState<string>("Never");
   const [selectedAssignment, setSelectedAssignment] = useState<RouteAssignment | null>(null);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -165,59 +154,30 @@ const Homepage = () => {
   const [selectedRouteIds, setSelectedRouteIds] = useState<number[]>([]);
   const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
+  // ✅ NEW: Toast notification state
+  const [toast, setToast] = useState<{
+    type: "success" | "error" | "info";
+    message: string;
+  } | null>(null);
+
   const assignmentsRef = useRef(assignments);
-  const hasFetchedRef = useRef(false);
 
   useEffect(() => {
     assignmentsRef.current = assignments;
   }, [assignments]);
 
-  // ✅✅✅ HYDRATION FIX — Mount అయ్యాక మాత్రమే cache load చేయి
-  useEffect(() => {
-    setMounted(true);
+  // ✅ NEW: Toast helper — auto hide after 4 seconds
+  const showToast = useCallback(
+    (type: "success" | "error" | "info", message: string) => {
+      setToast({ type, message });
+      setTimeout(() => setToast(null), 4000);
+    },
+    []
+  );
 
-    if (typeof window === "undefined") return;
-
-    try {
-      const cached = localStorage.getItem(CACHE_KEY);
-      const cachedTime = localStorage.getItem(CACHE_TIMESTAMP_KEY);
-      if (cached && cachedTime) {
-        const age = Date.now() - parseInt(cachedTime, 10);
-        if (age < CACHE_MAX_AGE_MS) {
-          const parsed = JSON.parse(cached) as RouteAssignment[];
-          console.log(
-            `⚡ Cache loaded on mount: ${parsed.length} assignments (${Math.round(age / 1000)}s old)`
-          );
-          setAssignments(parsed);
-          setLastReloadTime(new Date(parseInt(cachedTime, 10)).toLocaleString());
-        } else {
-          localStorage.removeItem(CACHE_KEY);
-          localStorage.removeItem(CACHE_TIMESTAMP_KEY);
-        }
-      }
-    } catch (err) {
-      console.error("Cache load error:", err);
-    }
-  }, []);
-
-  // ✅ Save cache whenever assignments change (skip placeholders)
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (assignments.length === 0) return;
-    const hasReal = assignments.some((a) => a.source !== "Connecting");
-    if (!hasReal) return;
-
-    try {
-      localStorage.setItem(CACHE_KEY, JSON.stringify(assignments));
-      localStorage.setItem(CACHE_TIMESTAMP_KEY, Date.now().toString());
-    } catch (err) {
-      console.error("Error saving cache:", err);
-    }
-  }, [assignments]);
-
-  // ✅ Success message banner
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -319,6 +279,8 @@ const Homepage = () => {
     server: Server
   ): Promise<RulesResponse | null> => {
     try {
+      console.log(`Fetching rules from ${server.ipAddress}...`);
+
       const response = await fetch("/api/fetch-rules", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -331,6 +293,12 @@ const Homepage = () => {
       });
 
       const data = await response.json();
+
+      console.log(`Response from ${server.ipAddress}:`, {
+        success: data.success,
+        routesCount: data.data?.routes?.length || 0,
+        error: data.data?.error,
+      });
 
       if (!data.success) {
         throw new Error(
@@ -348,21 +316,56 @@ const Homepage = () => {
     }
   };
 
-  const buildAssignments = useCallback(
-    (
-      results: Array<{ server: Server; rulesData: RulesResponse | null }>,
-      startId = 1
-    ): RouteAssignment[] => {
-      const out: RouteAssignment[] = [];
-      let id = startId;
+  const fetchRulesFromAllServers = useCallback(async () => {
+    if (servers.length === 0) {
+      console.log("No servers available to fetch rules from");
+      alert("No servers found. Please add servers first.");
+      return;
+    }
 
-      for (const { server, rulesData } of results) {
+    setIsLoading(true);
+
+    const newAssignments: RouteAssignment[] = [];
+    let assignmentId = 1;
+
+    for (const server of servers) {
+      try {
+        console.log(
+          `Fetching rules from server: ${server.displayName} (${server.ipAddress})`
+        );
+
+        newAssignments.push({
+          id: assignmentId++,
+          request: `Connecting to ${server.ipAddress}...`,
+          redirect: "Fetching rules.conf...",
+          assignedServer: server.ipAddress,
+          sourceServer: server.displayName,
+          source: "Connecting",
+          status: "pending",
+        });
+
+        setAssignments([...newAssignments]);
+
+        const rulesData = await fetchRulesFromServer(server);
+
+        const updatedAssignments = newAssignments.filter(
+          (a) =>
+            !(
+              a.request === `Connecting to ${server.ipAddress}...` &&
+              a.status === "pending"
+            )
+        );
+
         if (
           rulesData &&
           rulesData.routes &&
           Array.isArray(rulesData.routes) &&
           rulesData.routes.length > 0
         ) {
+          console.log(
+            `Found ${rulesData.routes.length} routes in ${server.displayName}`
+          );
+
           rulesData.routes.forEach((route: Route) => {
             const requestPath = route.path || route.request || "";
             let redirectUrl = route.origin || route.redirect || "";
@@ -370,12 +373,14 @@ const Homepage = () => {
 
             if (redirectUrl && !redirectUrl.includes("Error")) {
               redirectUrl = redirectUrl.replace(/\/$/, "");
+
               if (
                 !redirectUrl.startsWith("http://") &&
                 !redirectUrl.startsWith("https://")
               ) {
                 redirectUrl = `http://${redirectUrl}`;
               }
+
               const pathToAdd = originPath || requestPath;
               if (
                 pathToAdd &&
@@ -386,10 +391,13 @@ const Homepage = () => {
               }
             }
 
-            if (!requestPath || !redirectUrl) return;
+            if (!requestPath || !redirectUrl) {
+              console.warn("Skipping route missing path or origin:", route);
+              return;
+            }
 
-            out.push({
-              id: id++,
+            updatedAssignments.push({
+              id: assignmentId++,
               request: requestPath,
               redirect: redirectUrl,
               assignedServer: server.ipAddress,
@@ -405,8 +413,10 @@ const Homepage = () => {
         } else {
           const errorMessage =
             rulesData?.error || "No routes found in rules.conf";
-          out.push({
-            id: id++,
+          console.log(`No routes for ${server.displayName}: ${errorMessage}`);
+
+          updatedAssignments.push({
+            id: assignmentId++,
             request: `/server-${server.ipAddress}/`,
             redirect: errorMessage,
             assignedServer: server.ipAddress,
@@ -415,121 +425,52 @@ const Homepage = () => {
             status: rulesData?.error ? "error" : "success",
           });
         }
-      }
-      return out;
-    },
-    []
-  );
 
-  const fetchRulesFromAllServers = useCallback(
-    async (options?: { silent?: boolean; force?: boolean }) => {
-      const silent = options?.silent ?? false;
-      const force = options?.force ?? false;
+        newAssignments.length = 0;
+        newAssignments.push(...updatedAssignments);
+        setAssignments([...newAssignments]);
+      } catch {
+        console.error(`Failed to fetch rules from ${server.displayName}`);
 
-      if (servers.length === 0) {
-        if (!silent) alert("No servers found. Please add servers first.");
-        return;
-      }
-
-      const hasCachedData =
-        !force &&
-        assignmentsRef.current.filter((a) => a.source !== "Connecting").length > 0;
-
-      if (!hasCachedData) {
-        setIsLoading(true);
-        const placeholderAssignments: RouteAssignment[] = servers.map(
-          (server, idx) => ({
-            id: -(idx + 1),
-            request: `Connecting to ${server.ipAddress}...`,
-            redirect: "Fetching rules.conf...",
-            assignedServer: server.ipAddress,
-            sourceServer: server.displayName,
-            source: "Connecting",
-            status: "pending" as const,
-          })
+        const updatedAssignments = newAssignments.filter(
+          (a) =>
+            !(
+              a.request === `Connecting to ${server.ipAddress}...` &&
+              a.status === "pending"
+            )
         );
-        setAssignments(placeholderAssignments);
-      } else {
-        setIsBackgroundFetching(true);
+
+        updatedAssignments.push({
+          id: assignmentId++,
+          request: `/server-${server.ipAddress}/`,
+          redirect: `SSH Error: Connection failed`,
+          assignedServer: server.ipAddress,
+          sourceServer: server.displayName,
+          source: "SSH Error",
+          status: "error",
+        });
+
+        newAssignments.length = 0;
+        newAssignments.push(...updatedAssignments);
+        setAssignments([...newAssignments]);
       }
+    }
 
-      console.log(`🚀 Fetching rules from ${servers.length} servers...`);
-
-      const fetchPromises = servers.map(async (server) => {
-        try {
-          const rulesData = await fetchRulesFromServer(server);
-          return { server, rulesData };
-        } catch (err) {
-          console.error(`Failed: ${server.displayName}`, err);
-          return {
-            server,
-            rulesData: {
-              routes: [],
-              error: "Connection failed",
-            } as RulesResponse,
-          };
-        }
-      });
-
-      const results: Array<{
-        server: Server;
-        rulesData: RulesResponse | null;
-      }> = [];
-
-      const CHUNK_SIZE = 10;
-      for (let i = 0; i < fetchPromises.length; i += CHUNK_SIZE) {
-        const chunk = fetchPromises.slice(i, i + CHUNK_SIZE);
-        const chunkResults = await Promise.all(chunk);
-        results.push(...chunkResults);
-
-        const partial = buildAssignments(results);
-        setAssignments(partial);
-        console.log(
-          `📥 Progress: ${results.length}/${servers.length} servers fetched`
-        );
-      }
-
-      const finalAssignments = buildAssignments(results);
-      setAssignments(finalAssignments);
-
-      try {
-        if (typeof window !== "undefined") {
-          localStorage.setItem(CACHE_KEY, JSON.stringify(finalAssignments));
-          localStorage.setItem(CACHE_TIMESTAMP_KEY, Date.now().toString());
-        }
-      } catch (err) {
-        console.error("Error saving cache:", err);
-      }
-
-      setIsLoading(false);
-      setIsBackgroundFetching(false);
-      setLastReloadTime(new Date().toLocaleString());
-      setSelectedRouteIds([]);
-
-      console.log(`✅ Fetched rules from ${servers.length} servers`);
-    },
-    [servers, buildAssignments]
-  );
+    setIsLoading(false);
+    setLastReloadTime(new Date().toLocaleString());
+    setSelectedRouteIds([]);
+  }, [servers]);
 
   const handleReload = async () => {
-    if (typeof window !== "undefined") {
-      localStorage.removeItem(CACHE_KEY);
-      localStorage.removeItem(CACHE_TIMESTAMP_KEY);
-    }
-    setAssignments([]);
-    await fetchRulesFromAllServers({ force: true });
+    await fetchRulesFromAllServers();
     setCurrentPage(1);
   };
 
-  // ✅ Auto-fetch on mount — mounted అయ్యాక మాత్రమే
   useEffect(() => {
-    if (mounted && servers.length > 0 && !hasFetchedRef.current) {
-      hasFetchedRef.current = true;
-      const hasCache =
-        assignmentsRef.current.filter((a) => a.source !== "Connecting").length > 0;
-      fetchRulesFromAllServers({ silent: hasCache });
+    if (servers.length > 0) {
+      fetchRulesFromAllServers();
     }
-  }, [servers, fetchRulesFromAllServers, mounted]);
+  }, [servers, fetchRulesFromAllServers]);
 
   const handleCreateRoute = async (data: {
     originUrls: string[];
@@ -560,6 +501,7 @@ const Homepage = () => {
       for (const url of originUrls) {
         try {
           const urlObj = new URL(url);
+
           const fullPath = urlObj.pathname;
           const pathParts = fullPath.split("/").filter((part) => part.length > 0);
 
@@ -571,12 +513,17 @@ const Homepage = () => {
           }
 
           let finalPath = "/" + pathParts.join("/") + "/";
+
           if (finalPath === "/") {
             finalPath = "/stream/";
           }
 
           const origin = urlObj.host;
           const useSSL = url.startsWith("https") ? "true" : "false";
+
+          console.log(`Processing URL: ${url}`);
+          console.log(`Original path: ${fullPath}`);
+          console.log(`Final path: ${finalPath}`);
 
           routesToAdd.push({
             host: "",
@@ -627,13 +574,10 @@ const Homepage = () => {
       });
 
       const results = await Promise.all(writePromises);
+
       const allSuccess = results.every((r) => r.success);
 
       if (allSuccess) {
-        if (typeof window !== "undefined") {
-          localStorage.removeItem(CACHE_KEY);
-          localStorage.removeItem(CACHE_TIMESTAMP_KEY);
-        }
         fetchRulesFromAllServers().catch((err) =>
           console.error("Background refresh error:", err)
         );
@@ -673,6 +617,7 @@ const Homepage = () => {
     }
   };
 
+  // ✅ UPDATED: Bulk delete — instant local remove + toast
   const handleBulkDelete = async () => {
     if (selectedRouteIds.length === 0) return;
 
@@ -737,35 +682,50 @@ const Homepage = () => {
 
       const results = await Promise.all(deletePromises);
 
-      if (typeof window !== "undefined") {
-        localStorage.removeItem(CACHE_KEY);
-        localStorage.removeItem(CACHE_TIMESTAMP_KEY);
-      }
-      await fetchRulesFromAllServers({ force: true });
-
       const successful = results.filter((r) => r.success);
       const failed = results.filter((r) => !r.success);
 
+      // ✅ INSTANT: Success అయిన routes ని local state నుండి వెంటనే తీసేయి
+      if (successful.length > 0) {
+        const successfullyDeletedIds = selectedRouteIds.filter((id) => {
+          const route = assignments.find((a) => a.id === id);
+          if (!route) return false;
+          return successful.some((r) => r.server === route.sourceServer);
+        });
+
+        setAssignments((prev) =>
+          prev.filter((a) => !successfullyDeletedIds.includes(a.id))
+        );
+      }
+
       if (failed.length === 0) {
-        alert(
+        showToast(
+          "success",
           `Successfully deleted ${selectedRouteIds.length} route(s) from ${successful.length} server(s)!`
         );
       } else {
-        alert(
-          `Partially completed: Deleted from ${successful.length} servers, failed on ${failed.length} servers. Please check individual servers.`
+        showToast(
+          "info",
+          `Partially completed: Deleted from ${successful.length} servers, failed on ${failed.length} servers.`
         );
       }
 
       setSelectedRouteIds([]);
       setShowBulkDeleteModal(false);
+
+      // ✅ Background refresh (UI block చేయదు)
+      fetchRulesFromAllServers().catch((err) =>
+        console.error("Background refresh error:", err)
+      );
     } catch (error) {
       console.error("Error in bulk delete:", error);
-      alert("Failed to delete routes. Please try again.");
+      showToast("error", "Failed to delete routes. Please try again.");
     } finally {
       setIsBulkDeleting(false);
     }
   };
 
+  // ✅ UPDATED: Single delete — instant local remove + toast
   const handleDelete = async (id: number) => {
     const assignmentToDelete = assignments.find((a) => a.id === id);
     if (!assignmentToDelete) return;
@@ -774,7 +734,7 @@ const Homepage = () => {
       (s) => s.displayName === assignmentToDelete.sourceServer
     );
     if (!server) {
-      alert("Server not found");
+      showToast("error", "Server not found");
       return;
     }
 
@@ -822,11 +782,8 @@ const Homepage = () => {
       const result = await response.json();
 
       if (result.success) {
-        if (typeof window !== "undefined") {
-          localStorage.removeItem(CACHE_KEY);
-          localStorage.removeItem(CACHE_TIMESTAMP_KEY);
-        }
-        await fetchRulesFromAllServers({ force: true });
+        // ✅ INSTANT: Local state నుండి వెంటనే తీసేయి (re-fetch అవసరం లేదు!)
+        setAssignments((prev) => prev.filter((a) => a.id !== id));
 
         if (showDetailsModal && selectedAssignment?.id === id) {
           setShowDetailsModal(false);
@@ -836,13 +793,22 @@ const Homepage = () => {
           prev.filter((selectedId) => selectedId !== id)
         );
 
-        alert("Route deleted successfully from server!");
+        // ✅ Styled success toast (browser alert బదులు)
+        showToast(
+          "success",
+          `Route "${assignmentToDelete.request}" deleted successfully from ${server.displayName}!`
+        );
+
+        // ✅ Background లో re-fetch (UI block చేయదు)
+        fetchRulesFromAllServers().catch((err) =>
+          console.error("Background refresh error:", err)
+        );
       } else {
-        alert(`Failed to delete route: ${result.error}`);
+        showToast("error", `Failed to delete route: ${result.error}`);
       }
     } catch (error) {
       console.error("Error deleting route:", error);
-      alert("Failed to delete route. Please try again.");
+      showToast("error", "Failed to delete route. Please try again.");
     } finally {
       setIsLoading(false);
     }
@@ -896,7 +862,7 @@ const Homepage = () => {
       (s) => s.displayName === selectedAssignment.sourceServer
     );
     if (!server) {
-      alert("Server not found");
+      showToast("error", "Server not found");
       return;
     }
 
@@ -963,19 +929,15 @@ const Homepage = () => {
       const result = await response.json();
 
       if (result.success) {
-        if (typeof window !== "undefined") {
-          localStorage.removeItem(CACHE_KEY);
-          localStorage.removeItem(CACHE_TIMESTAMP_KEY);
-        }
-        await fetchRulesFromAllServers({ force: true });
+        await fetchRulesFromAllServers();
         setShowEditModal(false);
-        alert("Route updated successfully on server!");
+        showToast("success", "Route updated successfully on server!");
       } else {
-        alert(`Failed to update route: ${result.error}`);
+        showToast("error", `Failed to update route: ${result.error}`);
       }
     } catch (error) {
       console.error("Error updating route:", error);
-      alert("Failed to update route. Please try again.");
+      showToast("error", "Failed to update route. Please try again.");
     } finally {
       setIsLoading(false);
     }
@@ -1012,30 +974,57 @@ const Homepage = () => {
       selectedRouteIds.includes(route.id)
     );
 
-  // ✅✅✅ HYDRATION FIX — mounted అవ్వకముందు loading skeleton చూపించు
-  // ఇలా చేస్తే server HTML మరియు first client render ఒకేలా ఉంటాయి
-  if (!mounted) {
-    return (
-      <div className="min-h-screen bg-black text-white">
-        <Header onCreateRoute={() => setShowCreateModal(true)} />
-        <div className="px-20 py-28">
-          <h1 className="text-3xl font-bold mb-2">
-            Route Server Assignments
-          </h1>
-          <div className="mt-8 flex items-center gap-3 text-gray-400">
-            <span className="animate-spin text-2xl">⟳</span>
-            <span>Loading assignments...</span>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="min-h-screen bg-black text-white">
       <Header onCreateRoute={() => setShowCreateModal(true)} />
 
+      {/* ✅ NEW: Toast Notification */}
+      {toast && (
+        <div className="fixed top-24 right-6 z-[100] animate-slide-in">
+          <div
+            className={`flex items-start gap-3 px-5 py-4 rounded-lg shadow-2xl border min-w-[320px] max-w-md backdrop-blur-md ${
+              toast.type === "success"
+                ? "bg-green-900/90 border-green-500/60 text-green-100"
+                : toast.type === "error"
+                ? "bg-red-900/90 border-red-500/60 text-red-100"
+                : "bg-blue-900/90 border-blue-500/60 text-blue-100"
+            }`}
+          >
+            <div
+              className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
+                toast.type === "success"
+                  ? "bg-green-500/30"
+                  : toast.type === "error"
+                  ? "bg-red-500/30"
+                  : "bg-blue-500/30"
+              }`}
+            >
+              {toast.type === "success" ? (
+                <FiCheck className="text-green-300 text-lg" />
+              ) : toast.type === "error" ? (
+                <FiAlertCircle className="text-red-300 text-lg" />
+              ) : (
+                <FiAlertCircle className="text-blue-300 text-lg" />
+              )}
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-medium leading-relaxed">
+                {toast.message}
+              </p>
+            </div>
+            <button
+              onClick={() => setToast(null)}
+              className="flex-shrink-0 p-1 hover:bg-white/10 rounded transition-colors"
+              aria-label="Close"
+            >
+              <FiX className="text-lg opacity-70 hover:opacity-100" />
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="px-20 py-28">
+        {/* ✅ Success Message Banner */}
         {successMessage && (
           <div className="mb-6 bg-green-900/30 border border-green-700/50 rounded-lg p-4 flex items-start gap-3 shadow-lg">
             <div className="p-2 bg-green-900/50 rounded-full flex-shrink-0">
@@ -1156,13 +1145,6 @@ const Homepage = () => {
               Servers: {servers.length}
               {servers.length === 0 && " (Add servers first)"}
             </div>
-
-            {isBackgroundFetching && (
-              <div className="px-3 py-1 bg-yellow-900/30 text-yellow-300 rounded text-sm flex items-center gap-2">
-                <span className="animate-spin text-xs">⟳</span>
-                Updating in background...
-              </div>
-            )}
 
             {lastReloadTime !== "Never" && (
               <div className="px-3 py-1 bg-green-900/30 text-green-300 rounded text-sm">
@@ -1840,7 +1822,7 @@ const Homepage = () => {
                         originPath: e.target.value,
                       })
                     }
-                    className="w-full px-4 py-2 bg-[#1a1a1a] border border-gray-700 rounded focus:outline-none focus:border-blue-500 text-white"
+                    className="w-full px-4 py-2 rounded bg-[#1a1a1a] border border-gray-700 focus:outline-none focus:border-blue-500 text-white"
                     placeholder="/stream/"
                   />
                 </div>
