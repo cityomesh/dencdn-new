@@ -63,7 +63,7 @@ interface BulkDeleteModalProps {
 
 const CACHE_KEY = "homepage_assignments_cache";
 const CACHE_TIMESTAMP_KEY = "homepage_assignments_timestamp";
-const CACHE_MAX_AGE_MS = 10 * 60 * 1000; // 10 minutes
+const CACHE_MAX_AGE_MS = 10 * 60 * 1000;
 
 const BulkDeleteModal = ({
   isOpen,
@@ -133,17 +133,23 @@ const BulkDeleteModal = ({
 };
 
 const Homepage = () => {
+  // ✅ FIXED: assignments ఇప్పుడు [] తో మొదలవుతుంది (server + client same)
+  // Cache ని useEffect లో load చేస్తాం
+  const [assignments, setAssignments] = useState<RouteAssignment[]>([]);
+  const [lastReloadTime, setLastReloadTime] = useState<string>("Never");
+
+  // ✅✅✅ HYDRATION FIX: mounted state — cache ని client-side only లో load చేయడానికి
+  const [mounted, setMounted] = useState(false);
+
   const [search, setSearch] = useState("");
   const [stream, setStream] = useState("all");
   const [selectedSourceServer, setSelectedSourceServer] = useState<string>("all");
-  const [assignments, setAssignments] = useState<RouteAssignment[]>([]);
   const [filteredAssignments, setFilteredAssignments] = useState<RouteAssignment[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(100);
   const [isLoading, setIsLoading] = useState(false);
   const [isBackgroundFetching, setIsBackgroundFetching] = useState(false);
   const [servers, setServers] = useState<Server[]>([]);
-  const [lastReloadTime, setLastReloadTime] = useState<string>("Never");
   const [selectedAssignment, setSelectedAssignment] = useState<RouteAssignment | null>(null);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -159,7 +165,6 @@ const Homepage = () => {
   const [selectedRouteIds, setSelectedRouteIds] = useState<number[]>([]);
   const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
-
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const assignmentsRef = useRef(assignments);
@@ -169,39 +174,38 @@ const Homepage = () => {
     assignmentsRef.current = assignments;
   }, [assignments]);
 
-  // ============================================================
-  // ✅ CACHE: Load from localStorage on mount (INSTANT DATA)
-  // ============================================================
+  // ✅✅✅ HYDRATION FIX — Mount అయ్యాక మాత్రమే cache load చేయి
   useEffect(() => {
+    setMounted(true);
+
     if (typeof window === "undefined") return;
 
     try {
       const cached = localStorage.getItem(CACHE_KEY);
       const cachedTime = localStorage.getItem(CACHE_TIMESTAMP_KEY);
-
       if (cached && cachedTime) {
         const age = Date.now() - parseInt(cachedTime, 10);
         if (age < CACHE_MAX_AGE_MS) {
           const parsed = JSON.parse(cached) as RouteAssignment[];
-          console.log(`✅ Loaded ${parsed.length} cached assignments (age: ${Math.round(age / 1000)}s)`);
+          console.log(
+            `⚡ Cache loaded on mount: ${parsed.length} assignments (${Math.round(age / 1000)}s old)`
+          );
           setAssignments(parsed);
           setLastReloadTime(new Date(parseInt(cachedTime, 10)).toLocaleString());
         } else {
-          console.log("Cache expired, will fetch fresh data");
           localStorage.removeItem(CACHE_KEY);
           localStorage.removeItem(CACHE_TIMESTAMP_KEY);
         }
       }
     } catch (err) {
-      console.error("Error loading cache:", err);
+      console.error("Cache load error:", err);
     }
   }, []);
 
-  // ✅ Save cache whenever assignments change (debounced)
+  // ✅ Save cache whenever assignments change (skip placeholders)
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (assignments.length === 0) return;
-    // Don't cache placeholder/pending states
     const hasReal = assignments.some((a) => a.source !== "Connecting");
     if (!hasReal) return;
 
@@ -213,6 +217,7 @@ const Homepage = () => {
     }
   }, [assignments]);
 
+  // ✅ Success message banner
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -343,7 +348,6 @@ const Homepage = () => {
     }
   };
 
-  // ✅✅✅ Helper: Raw routes → RouteAssignment[]
   const buildAssignments = useCallback(
     (
       results: Array<{ server: Server; rulesData: RulesResponse | null }>,
@@ -417,25 +421,21 @@ const Homepage = () => {
     []
   );
 
-  // ✅✅✅ MAIN FETCH — 70 servers కి optimized parallel fetch
-  // Strategy: అన్ని servers ఒకేసారి fetch (parallel), batch లేదు.
-  // Kani connection failures వల్ల కొన్ని servers fail అయినా మిగతావి continue అవుతాయి.
   const fetchRulesFromAllServers = useCallback(
-    async (options?: { silent?: boolean }) => {
+    async (options?: { silent?: boolean; force?: boolean }) => {
       const silent = options?.silent ?? false;
+      const force = options?.force ?? false;
 
       if (servers.length === 0) {
-        console.log("No servers available to fetch rules from");
         if (!silent) alert("No servers found. Please add servers first.");
         return;
       }
 
-      // If cache exists, don't clear assignments (keep showing cached data)
       const hasCachedData =
-        assignmentsRef.current.some((a) => a.source === "rules.conf");
+        !force &&
+        assignmentsRef.current.filter((a) => a.source !== "Connecting").length > 0;
 
       if (!hasCachedData) {
-        // No cache — show placeholders immediately
         setIsLoading(true);
         const placeholderAssignments: RouteAssignment[] = servers.map(
           (server, idx) => ({
@@ -450,13 +450,10 @@ const Homepage = () => {
         );
         setAssignments(placeholderAssignments);
       } else {
-        // Cache exists — show it, fetch in background silently
         setIsBackgroundFetching(true);
       }
 
-      // ✅ PARALLEL FETCH — అన్ని 70 servers ఒకేసారి
-      // Promise.allSettled వాడుతున్నాం — ఒకటి fail అయినా మిగతావి continue
-      console.log(`🚀 Fetching rules from ${servers.length} servers in parallel...`);
+      console.log(`🚀 Fetching rules from ${servers.length} servers...`);
 
       const fetchPromises = servers.map(async (server) => {
         try {
@@ -474,34 +471,27 @@ const Homepage = () => {
         }
       });
 
-      // Progress updates: ప్రతి 5 servers తర్వాత UI update
-      // ఇలా చేస్తే user కి "data వస్తోంది" అని కనిపిస్తుంది
       const results: Array<{
         server: Server;
         rulesData: RulesResponse | null;
       }> = [];
 
-      // Process in chunks for progress updates, but still parallel
       const CHUNK_SIZE = 10;
       for (let i = 0; i < fetchPromises.length; i += CHUNK_SIZE) {
         const chunk = fetchPromises.slice(i, i + CHUNK_SIZE);
         const chunkResults = await Promise.all(chunk);
         results.push(...chunkResults);
 
-        // ✅ Progressive update — ఇప్పటివరకు వచ్చినవి చూపించు
         const partial = buildAssignments(results);
-        // Merge with any cached entries for servers not yet fetched
         setAssignments(partial);
         console.log(
           `📥 Progress: ${results.length}/${servers.length} servers fetched`
         );
       }
 
-      // ✅ Final assignments
       const finalAssignments = buildAssignments(results);
       setAssignments(finalAssignments);
 
-      // ✅ Cache update
       try {
         if (typeof window !== "undefined") {
           localStorage.setItem(CACHE_KEY, JSON.stringify(finalAssignments));
@@ -522,22 +512,24 @@ const Homepage = () => {
   );
 
   const handleReload = async () => {
-    // Force reload — clear cache, fetch fresh
     if (typeof window !== "undefined") {
       localStorage.removeItem(CACHE_KEY);
       localStorage.removeItem(CACHE_TIMESTAMP_KEY);
     }
-    await fetchRulesFromAllServers();
+    setAssignments([]);
+    await fetchRulesFromAllServers({ force: true });
     setCurrentPage(1);
   };
 
-  // ✅ Auto-fetch on mount (only once)
+  // ✅ Auto-fetch on mount — mounted అయ్యాక మాత్రమే
   useEffect(() => {
-    if (servers.length > 0 && !hasFetchedRef.current) {
+    if (mounted && servers.length > 0 && !hasFetchedRef.current) {
       hasFetchedRef.current = true;
-      fetchRulesFromAllServers();
+      const hasCache =
+        assignmentsRef.current.filter((a) => a.source !== "Connecting").length > 0;
+      fetchRulesFromAllServers({ silent: hasCache });
     }
-  }, [servers, fetchRulesFromAllServers]);
+  }, [servers, fetchRulesFromAllServers, mounted]);
 
   const handleCreateRoute = async (data: {
     originUrls: string[];
@@ -638,7 +630,6 @@ const Homepage = () => {
       const allSuccess = results.every((r) => r.success);
 
       if (allSuccess) {
-        // Invalidate cache so next fetch gets fresh data
         if (typeof window !== "undefined") {
           localStorage.removeItem(CACHE_KEY);
           localStorage.removeItem(CACHE_TIMESTAMP_KEY);
@@ -750,7 +741,7 @@ const Homepage = () => {
         localStorage.removeItem(CACHE_KEY);
         localStorage.removeItem(CACHE_TIMESTAMP_KEY);
       }
-      await fetchRulesFromAllServers();
+      await fetchRulesFromAllServers({ force: true });
 
       const successful = results.filter((r) => r.success);
       const failed = results.filter((r) => !r.success);
@@ -835,7 +826,7 @@ const Homepage = () => {
           localStorage.removeItem(CACHE_KEY);
           localStorage.removeItem(CACHE_TIMESTAMP_KEY);
         }
-        await fetchRulesFromAllServers();
+        await fetchRulesFromAllServers({ force: true });
 
         if (showDetailsModal && selectedAssignment?.id === id) {
           setShowDetailsModal(false);
@@ -976,7 +967,7 @@ const Homepage = () => {
           localStorage.removeItem(CACHE_KEY);
           localStorage.removeItem(CACHE_TIMESTAMP_KEY);
         }
-        await fetchRulesFromAllServers();
+        await fetchRulesFromAllServers({ force: true });
         setShowEditModal(false);
         alert("Route updated successfully on server!");
       } else {
@@ -1020,6 +1011,25 @@ const Homepage = () => {
     selectableRoutesOnPage.every((route) =>
       selectedRouteIds.includes(route.id)
     );
+
+  // ✅✅✅ HYDRATION FIX — mounted అవ్వకముందు loading skeleton చూపించు
+  // ఇలా చేస్తే server HTML మరియు first client render ఒకేలా ఉంటాయి
+  if (!mounted) {
+    return (
+      <div className="min-h-screen bg-black text-white">
+        <Header onCreateRoute={() => setShowCreateModal(true)} />
+        <div className="px-20 py-28">
+          <h1 className="text-3xl font-bold mb-2">
+            Route Server Assignments
+          </h1>
+          <div className="mt-8 flex items-center gap-3 text-gray-400">
+            <span className="animate-spin text-2xl">⟳</span>
+            <span>Loading assignments...</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-black text-white">
