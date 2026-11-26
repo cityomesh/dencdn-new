@@ -329,152 +329,6 @@ const HomepageContent = () => {
     }
   };
 
-  // const fetchRulesFromAllServers = useCallback(async () => {
-  //   if (servers.length === 0) {
-  //     console.log("No servers available to fetch rules from");
-  //     alert("No servers found. Please add servers first.");
-  //     return;
-  //   }
-
-  //   setIsLoading(true);
-
-  //   const newAssignments: RouteAssignment[] = [];
-  //   let assignmentId = 1;
-
-  //   for (const server of servers) {
-  //     try {
-  //       console.log(
-  //         `Fetching rules from server: ${server.displayName} (${server.ipAddress})`
-  //       );
-
-  //       newAssignments.push({
-  //         id: assignmentId++,
-  //         request: `Connecting to ${server.ipAddress}...`,
-  //         redirect: "Fetching rules.conf...",
-  //         assignedServer: server.ipAddress,
-  //         sourceServer: server.displayName,
-  //         source: "Connecting",
-  //         status: "pending",
-  //       });
-
-  //       setAssignments([...newAssignments]);
-
-  //       const rulesData = await fetchRulesFromServer(server);
-
-  //       const updatedAssignments = newAssignments.filter(
-  //         (a) =>
-  //           !(
-  //             a.request === `Connecting to ${server.ipAddress}...` &&
-  //             a.status === "pending"
-  //           )
-  //       );
-
-  //       if (
-  //         rulesData &&
-  //         rulesData.routes &&
-  //         Array.isArray(rulesData.routes) &&
-  //         rulesData.routes.length > 0
-  //       ) {
-  //         console.log(
-  //           `Found ${rulesData.routes.length} routes in ${server.displayName}`
-  //         );
-
-  //         rulesData.routes.forEach((route: Route) => {
-  //           const requestPath = route.path || route.request || "";
-  //           let redirectUrl = route.origin || route.redirect || "";
-  //           const originPath = route.origin_path || route.originPath || "";
-
-  //           if (redirectUrl && !redirectUrl.includes("Error")) {
-  //             redirectUrl = redirectUrl.replace(/\/$/, "");
-
-  //             if (
-  //               !redirectUrl.startsWith("http://") &&
-  //               !redirectUrl.startsWith("https://")
-  //             ) {
-  //               redirectUrl = `http://${redirectUrl}`;
-  //             }
-
-  //             const pathToAdd = originPath || requestPath;
-  //             if (
-  //               pathToAdd &&
-  //               pathToAdd !== "/" &&
-  //               !redirectUrl.includes(pathToAdd)
-  //             ) {
-  //               redirectUrl = `${redirectUrl}${pathToAdd}`;
-  //             }
-  //           }
-
-  //           if (!requestPath || !redirectUrl) {
-  //             console.warn("Skipping route missing path or origin:", route);
-  //             return;
-  //           }
-
-  //           updatedAssignments.push({
-  //             id: assignmentId++,
-  //             request: requestPath,
-  //             redirect: redirectUrl,
-  //             assignedServer: server.ipAddress,
-  //             sourceServer: server.displayName,
-  //             source: "rules.conf",
-  //             status: "success",
-  //             host: route.host || "",
-  //             origin: route.origin || "",
-  //             originPath: originPath || requestPath,
-  //             useSSL: route.use_ssl || route.useSSL || "false",
-  //           });
-  //         });
-  //       } else {
-  //         const errorMessage =
-  //           rulesData?.error || "No routes found in rules.conf";
-  //         console.log(`No routes for ${server.displayName}: ${errorMessage}`);
-
-  //         updatedAssignments.push({
-  //           id: assignmentId++,
-  //           request: `/server-${server.ipAddress}/`,
-  //           redirect: errorMessage,
-  //           assignedServer: server.ipAddress,
-  //           sourceServer: server.displayName,
-  //           source: rulesData?.error ? "Error" : "Empty Config",
-  //           status: rulesData?.error ? "error" : "success",
-  //         });
-  //       }
-
-  //       newAssignments.length = 0;
-  //       newAssignments.push(...updatedAssignments);
-  //       setAssignments([...newAssignments]);
-  //     } catch {
-  //       console.error(`Failed to fetch rules from ${server.displayName}`);
-
-  //       const updatedAssignments = newAssignments.filter(
-  //         (a) =>
-  //           !(
-  //             a.request === `Connecting to ${server.ipAddress}...` &&
-  //             a.status === "pending"
-  //           )
-  //       );
-
-  //       updatedAssignments.push({
-  //         id: assignmentId++,
-  //         request: `/server-${server.ipAddress}/`,
-  //         redirect: `SSH Error: Connection failed`,
-  //         assignedServer: server.ipAddress,
-  //         sourceServer: server.displayName,
-  //         source: "SSH Error",
-  //         status: "error",
-  //       });
-
-  //       newAssignments.length = 0;
-  //       newAssignments.push(...updatedAssignments);
-  //       setAssignments([...newAssignments]);
-  //     }
-  //   }
-
-  //   setIsLoading(false);
-  //   setLastReloadTime(new Date().toLocaleString());
-  //   setSelectedRouteIds([]);
-  // }, [servers]);
-
-
   const fetchRulesFromAllServers = useCallback(async () => {
     if (servers.length === 0) {
       console.log("No servers available to fetch rules from");
@@ -487,15 +341,33 @@ const HomepageContent = () => {
     const newAssignments: RouteAssignment[] = [];
     let assignmentId = 1;
 
-    const BATCH_SIZE = 10;
-
-    const processServer = async (server: Server): Promise<RouteAssignment[]> => {
-      const serverAssignments: RouteAssignment[] = [];
-
+    for (const server of servers) {
       try {
-        console.log(`Fetching rules from ${server.displayName} (${server.ipAddress})...`);
+        console.log(
+          `Fetching rules from server: ${server.displayName} (${server.ipAddress})`
+        );
+
+        newAssignments.push({
+          id: assignmentId++,
+          request: `Connecting to ${server.ipAddress}...`,
+          redirect: "Fetching rules.conf...",
+          assignedServer: server.ipAddress,
+          sourceServer: server.displayName,
+          source: "Connecting",
+          status: "pending",
+        });
+
+        setAssignments([...newAssignments]);
 
         const rulesData = await fetchRulesFromServer(server);
+
+        const updatedAssignments = newAssignments.filter(
+          (a) =>
+            !(
+              a.request === `Connecting to ${server.ipAddress}...` &&
+              a.status === "pending"
+            )
+        );
 
         if (
           rulesData &&
@@ -503,7 +375,9 @@ const HomepageContent = () => {
           Array.isArray(rulesData.routes) &&
           rulesData.routes.length > 0
         ) {
-          console.log(`Found ${rulesData.routes.length} routes in ${server.displayName}`);
+          console.log(
+            `Found ${rulesData.routes.length} routes in ${server.displayName}`
+          );
 
           rulesData.routes.forEach((route: Route) => {
             const requestPath = route.path || route.request || "";
@@ -535,8 +409,8 @@ const HomepageContent = () => {
               return;
             }
 
-            serverAssignments.push({
-              id: 0,
+            updatedAssignments.push({
+              id: assignmentId++,
               request: requestPath,
               redirect: redirectUrl,
               assignedServer: server.ipAddress,
@@ -550,11 +424,12 @@ const HomepageContent = () => {
             });
           });
         } else {
-          const errorMessage = rulesData?.error || "No routes found in rules.conf";
+          const errorMessage =
+            rulesData?.error || "No routes found in rules.conf";
           console.log(`No routes for ${server.displayName}: ${errorMessage}`);
 
-          serverAssignments.push({
-            id: 0,
+          updatedAssignments.push({
+            id: assignmentId++,
             request: `/server-${server.ipAddress}/`,
             redirect: errorMessage,
             assignedServer: server.ipAddress,
@@ -563,11 +438,23 @@ const HomepageContent = () => {
             status: rulesData?.error ? "error" : "success",
           });
         }
+
+        newAssignments.length = 0;
+        newAssignments.push(...updatedAssignments);
+        setAssignments([...newAssignments]);
       } catch {
         console.error(`Failed to fetch rules from ${server.displayName}`);
 
-        serverAssignments.push({
-          id: 0,
+        const updatedAssignments = newAssignments.filter(
+          (a) =>
+            !(
+              a.request === `Connecting to ${server.ipAddress}...` &&
+              a.status === "pending"
+            )
+        );
+
+        updatedAssignments.push({
+          id: assignmentId++,
           request: `/server-${server.ipAddress}/`,
           redirect: `SSH Error: Connection failed`,
           assignedServer: server.ipAddress,
@@ -575,42 +462,16 @@ const HomepageContent = () => {
           source: "SSH Error",
           status: "error",
         });
-      }
 
-      return serverAssignments;
-    };
-
-    try {
-      for (let i = 0; i < servers.length; i += BATCH_SIZE) {
-        const batch = servers.slice(i, i + BATCH_SIZE);
-        console.log(
-          `Fetching batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(
-            servers.length / BATCH_SIZE
-          )} (${batch.length} servers)...`
-        );
-
-        const batchResults = await Promise.all(
-          batch.map((server) => processServer(server))
-        );
-
-        batchResults.forEach((serverAssignments) => {
-          serverAssignments.forEach((assignment) => {
-            newAssignments.push({
-              ...assignment,
-              id: assignmentId++,
-            });
-          });
-        });
-
+        newAssignments.length = 0;
+        newAssignments.push(...updatedAssignments);
         setAssignments([...newAssignments]);
       }
-    } catch (err) {
-      console.error("Error in batched fetch:", err);
-    } finally {
-      setIsLoading(false);
-      setLastReloadTime(new Date().toLocaleString());
-      setSelectedRouteIds([]);
     }
+
+    setIsLoading(false);
+    setLastReloadTime(new Date().toLocaleString());
+    setSelectedRouteIds([]);
   }, [servers]);
 
   const handleReload = async () => {
