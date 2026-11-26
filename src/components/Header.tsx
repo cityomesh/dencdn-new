@@ -3,12 +3,10 @@
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";   // ✅ usePathname తీసేయి
 import { FaBars, FaTimes, FaUserCircle } from "react-icons/fa";
-// ❌ REMOVE: import CreateRouteModal from "./CreateRouteModal";
 
 interface HeaderProps {
-  // ✅ Modal open చేసే simple callback
   onCreateRoute?: () => void;
 }
 
@@ -17,11 +15,7 @@ const Header: React.FC<HeaderProps> = ({ onCreateRoute }) => {
   const [isScrolled, setIsScrolled] = useState(false);
   const [loggedInUser, setLoggedInUser] = useState<string>("");
   const router = useRouter();
-
-  // ❌ REMOVE: isCreateRouteModalOpen state
-  // ❌ REMOVE: servers state
-  // ❌ REMOVE: fetchServers()
-  // ❌ REMOVE: handleCreateRoute()
+  // ❌ REMOVED: const pathname = usePathname();
 
   useEffect(() => {
     const handleScroll = () => setIsScrolled(window.scrollY > 20);
@@ -43,13 +37,11 @@ const Header: React.FC<HeaderProps> = ({ onCreateRoute }) => {
     router.push("/");
   };
 
-  // ✅ Header లోని "Create Route" button — parent modal open చేస్తుంది
   const handleOpenCreateRoute = () => {
     if (onCreateRoute) {
-      onCreateRoute();   // → Homepage లోని setShowCreateModal(true)
+      onCreateRoute();
     } else {
-      // 🛡️ Fallback: onCreateRoute prop లేకపోతే (ఉదా: వేరే page లో Header వాడితే)
-      router.push("/homepage");
+      router.push("/homepage?openCreateRoute=true");
     }
   };
 
@@ -91,7 +83,6 @@ const Header: React.FC<HeaderProps> = ({ onCreateRoute }) => {
                 </Link>
               </li>
               <li>
-                {/* ✅ FIXED: parent modal open అవుతుంది */}
                 <button
                   onClick={handleOpenCreateRoute}
                   className="text-white hover:text-gray-200 font-medium transition-colors"
@@ -157,7 +148,6 @@ const Header: React.FC<HeaderProps> = ({ onCreateRoute }) => {
                 </Link>
               </li>
               <li>
-                {/* ✅ FIXED (mobile) */}
                 <button
                   onClick={() => {
                     handleOpenCreateRoute();

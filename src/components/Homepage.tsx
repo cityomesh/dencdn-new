@@ -1,7 +1,8 @@
 // Homepage.tsx
 "use client";
 
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   FiRefreshCcw, FiSearch, FiTrash2, FiAlertCircle, FiChevronLeft,
   FiChevronRight, FiEdit, FiArrowLeft, FiPlus, FiCheckSquare, FiSquare,
@@ -128,7 +129,9 @@ const BulkDeleteModal = ({
   );
 };
 
-const Homepage = () => {
+const HomepageContent = () => {
+  const searchParams = useSearchParams();
+
   const [search, setSearch] = useState("");
   const [stream, setStream] = useState("all");
   const [selectedSourceServer, setSelectedSourceServer] = useState<string>("all");
@@ -157,7 +160,6 @@ const Homepage = () => {
 
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  // ✅ NEW: Toast notification state
   const [toast, setToast] = useState<{
     type: "success" | "error" | "info";
     message: string;
@@ -169,7 +171,6 @@ const Homepage = () => {
     assignmentsRef.current = assignments;
   }, [assignments]);
 
-  // ✅ NEW: Toast helper — auto hide after 4 seconds
   const showToast = useCallback(
     (type: "success" | "error" | "info", message: string) => {
       setToast({ type, message });
@@ -177,6 +178,18 @@ const Homepage = () => {
     },
     []
   );
+
+  // ✅ NEW: URL query param చూసి modal open చేయి
+  useEffect(() => {
+    const shouldOpen = searchParams.get("openCreateRoute");
+    if (shouldOpen === "true") {
+      setShowCreateModal(true);
+      // ✅ URL నుండి query param తీసేయి (refresh చేసినప్పుడు మళ్ళీ open అవ్వకూడదు)
+      const url = new URL(window.location.href);
+      url.searchParams.delete("openCreateRoute");
+      window.history.replaceState({}, "", url.toString());
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -316,6 +329,152 @@ const Homepage = () => {
     }
   };
 
+  // const fetchRulesFromAllServers = useCallback(async () => {
+  //   if (servers.length === 0) {
+  //     console.log("No servers available to fetch rules from");
+  //     alert("No servers found. Please add servers first.");
+  //     return;
+  //   }
+
+  //   setIsLoading(true);
+
+  //   const newAssignments: RouteAssignment[] = [];
+  //   let assignmentId = 1;
+
+  //   for (const server of servers) {
+  //     try {
+  //       console.log(
+  //         `Fetching rules from server: ${server.displayName} (${server.ipAddress})`
+  //       );
+
+  //       newAssignments.push({
+  //         id: assignmentId++,
+  //         request: `Connecting to ${server.ipAddress}...`,
+  //         redirect: "Fetching rules.conf...",
+  //         assignedServer: server.ipAddress,
+  //         sourceServer: server.displayName,
+  //         source: "Connecting",
+  //         status: "pending",
+  //       });
+
+  //       setAssignments([...newAssignments]);
+
+  //       const rulesData = await fetchRulesFromServer(server);
+
+  //       const updatedAssignments = newAssignments.filter(
+  //         (a) =>
+  //           !(
+  //             a.request === `Connecting to ${server.ipAddress}...` &&
+  //             a.status === "pending"
+  //           )
+  //       );
+
+  //       if (
+  //         rulesData &&
+  //         rulesData.routes &&
+  //         Array.isArray(rulesData.routes) &&
+  //         rulesData.routes.length > 0
+  //       ) {
+  //         console.log(
+  //           `Found ${rulesData.routes.length} routes in ${server.displayName}`
+  //         );
+
+  //         rulesData.routes.forEach((route: Route) => {
+  //           const requestPath = route.path || route.request || "";
+  //           let redirectUrl = route.origin || route.redirect || "";
+  //           const originPath = route.origin_path || route.originPath || "";
+
+  //           if (redirectUrl && !redirectUrl.includes("Error")) {
+  //             redirectUrl = redirectUrl.replace(/\/$/, "");
+
+  //             if (
+  //               !redirectUrl.startsWith("http://") &&
+  //               !redirectUrl.startsWith("https://")
+  //             ) {
+  //               redirectUrl = `http://${redirectUrl}`;
+  //             }
+
+  //             const pathToAdd = originPath || requestPath;
+  //             if (
+  //               pathToAdd &&
+  //               pathToAdd !== "/" &&
+  //               !redirectUrl.includes(pathToAdd)
+  //             ) {
+  //               redirectUrl = `${redirectUrl}${pathToAdd}`;
+  //             }
+  //           }
+
+  //           if (!requestPath || !redirectUrl) {
+  //             console.warn("Skipping route missing path or origin:", route);
+  //             return;
+  //           }
+
+  //           updatedAssignments.push({
+  //             id: assignmentId++,
+  //             request: requestPath,
+  //             redirect: redirectUrl,
+  //             assignedServer: server.ipAddress,
+  //             sourceServer: server.displayName,
+  //             source: "rules.conf",
+  //             status: "success",
+  //             host: route.host || "",
+  //             origin: route.origin || "",
+  //             originPath: originPath || requestPath,
+  //             useSSL: route.use_ssl || route.useSSL || "false",
+  //           });
+  //         });
+  //       } else {
+  //         const errorMessage =
+  //           rulesData?.error || "No routes found in rules.conf";
+  //         console.log(`No routes for ${server.displayName}: ${errorMessage}`);
+
+  //         updatedAssignments.push({
+  //           id: assignmentId++,
+  //           request: `/server-${server.ipAddress}/`,
+  //           redirect: errorMessage,
+  //           assignedServer: server.ipAddress,
+  //           sourceServer: server.displayName,
+  //           source: rulesData?.error ? "Error" : "Empty Config",
+  //           status: rulesData?.error ? "error" : "success",
+  //         });
+  //       }
+
+  //       newAssignments.length = 0;
+  //       newAssignments.push(...updatedAssignments);
+  //       setAssignments([...newAssignments]);
+  //     } catch {
+  //       console.error(`Failed to fetch rules from ${server.displayName}`);
+
+  //       const updatedAssignments = newAssignments.filter(
+  //         (a) =>
+  //           !(
+  //             a.request === `Connecting to ${server.ipAddress}...` &&
+  //             a.status === "pending"
+  //           )
+  //       );
+
+  //       updatedAssignments.push({
+  //         id: assignmentId++,
+  //         request: `/server-${server.ipAddress}/`,
+  //         redirect: `SSH Error: Connection failed`,
+  //         assignedServer: server.ipAddress,
+  //         sourceServer: server.displayName,
+  //         source: "SSH Error",
+  //         status: "error",
+  //       });
+
+  //       newAssignments.length = 0;
+  //       newAssignments.push(...updatedAssignments);
+  //       setAssignments([...newAssignments]);
+  //     }
+  //   }
+
+  //   setIsLoading(false);
+  //   setLastReloadTime(new Date().toLocaleString());
+  //   setSelectedRouteIds([]);
+  // }, [servers]);
+
+
   const fetchRulesFromAllServers = useCallback(async () => {
     if (servers.length === 0) {
       console.log("No servers available to fetch rules from");
@@ -328,33 +487,15 @@ const Homepage = () => {
     const newAssignments: RouteAssignment[] = [];
     let assignmentId = 1;
 
-    for (const server of servers) {
+    const BATCH_SIZE = 10;
+
+    const processServer = async (server: Server): Promise<RouteAssignment[]> => {
+      const serverAssignments: RouteAssignment[] = [];
+
       try {
-        console.log(
-          `Fetching rules from server: ${server.displayName} (${server.ipAddress})`
-        );
-
-        newAssignments.push({
-          id: assignmentId++,
-          request: `Connecting to ${server.ipAddress}...`,
-          redirect: "Fetching rules.conf...",
-          assignedServer: server.ipAddress,
-          sourceServer: server.displayName,
-          source: "Connecting",
-          status: "pending",
-        });
-
-        setAssignments([...newAssignments]);
+        console.log(`Fetching rules from ${server.displayName} (${server.ipAddress})...`);
 
         const rulesData = await fetchRulesFromServer(server);
-
-        const updatedAssignments = newAssignments.filter(
-          (a) =>
-            !(
-              a.request === `Connecting to ${server.ipAddress}...` &&
-              a.status === "pending"
-            )
-        );
 
         if (
           rulesData &&
@@ -362,9 +503,7 @@ const Homepage = () => {
           Array.isArray(rulesData.routes) &&
           rulesData.routes.length > 0
         ) {
-          console.log(
-            `Found ${rulesData.routes.length} routes in ${server.displayName}`
-          );
+          console.log(`Found ${rulesData.routes.length} routes in ${server.displayName}`);
 
           rulesData.routes.forEach((route: Route) => {
             const requestPath = route.path || route.request || "";
@@ -396,8 +535,8 @@ const Homepage = () => {
               return;
             }
 
-            updatedAssignments.push({
-              id: assignmentId++,
+            serverAssignments.push({
+              id: 0,
               request: requestPath,
               redirect: redirectUrl,
               assignedServer: server.ipAddress,
@@ -411,12 +550,11 @@ const Homepage = () => {
             });
           });
         } else {
-          const errorMessage =
-            rulesData?.error || "No routes found in rules.conf";
+          const errorMessage = rulesData?.error || "No routes found in rules.conf";
           console.log(`No routes for ${server.displayName}: ${errorMessage}`);
 
-          updatedAssignments.push({
-            id: assignmentId++,
+          serverAssignments.push({
+            id: 0,
             request: `/server-${server.ipAddress}/`,
             redirect: errorMessage,
             assignedServer: server.ipAddress,
@@ -425,23 +563,11 @@ const Homepage = () => {
             status: rulesData?.error ? "error" : "success",
           });
         }
-
-        newAssignments.length = 0;
-        newAssignments.push(...updatedAssignments);
-        setAssignments([...newAssignments]);
       } catch {
         console.error(`Failed to fetch rules from ${server.displayName}`);
 
-        const updatedAssignments = newAssignments.filter(
-          (a) =>
-            !(
-              a.request === `Connecting to ${server.ipAddress}...` &&
-              a.status === "pending"
-            )
-        );
-
-        updatedAssignments.push({
-          id: assignmentId++,
+        serverAssignments.push({
+          id: 0,
           request: `/server-${server.ipAddress}/`,
           redirect: `SSH Error: Connection failed`,
           assignedServer: server.ipAddress,
@@ -449,16 +575,42 @@ const Homepage = () => {
           source: "SSH Error",
           status: "error",
         });
+      }
 
-        newAssignments.length = 0;
-        newAssignments.push(...updatedAssignments);
+      return serverAssignments;
+    };
+
+    try {
+      for (let i = 0; i < servers.length; i += BATCH_SIZE) {
+        const batch = servers.slice(i, i + BATCH_SIZE);
+        console.log(
+          `Fetching batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(
+            servers.length / BATCH_SIZE
+          )} (${batch.length} servers)...`
+        );
+
+        const batchResults = await Promise.all(
+          batch.map((server) => processServer(server))
+        );
+
+        batchResults.forEach((serverAssignments) => {
+          serverAssignments.forEach((assignment) => {
+            newAssignments.push({
+              ...assignment,
+              id: assignmentId++,
+            });
+          });
+        });
+
         setAssignments([...newAssignments]);
       }
+    } catch (err) {
+      console.error("Error in batched fetch:", err);
+    } finally {
+      setIsLoading(false);
+      setLastReloadTime(new Date().toLocaleString());
+      setSelectedRouteIds([]);
     }
-
-    setIsLoading(false);
-    setLastReloadTime(new Date().toLocaleString());
-    setSelectedRouteIds([]);
   }, [servers]);
 
   const handleReload = async () => {
@@ -617,7 +769,6 @@ const Homepage = () => {
     }
   };
 
-  // ✅ UPDATED: Bulk delete — instant local remove + toast
   const handleBulkDelete = async () => {
     if (selectedRouteIds.length === 0) return;
 
@@ -685,7 +836,6 @@ const Homepage = () => {
       const successful = results.filter((r) => r.success);
       const failed = results.filter((r) => !r.success);
 
-      // ✅ INSTANT: Success అయిన routes ని local state నుండి వెంటనే తీసేయి
       if (successful.length > 0) {
         const successfullyDeletedIds = selectedRouteIds.filter((id) => {
           const route = assignments.find((a) => a.id === id);
@@ -713,7 +863,6 @@ const Homepage = () => {
       setSelectedRouteIds([]);
       setShowBulkDeleteModal(false);
 
-      // ✅ Background refresh (UI block చేయదు)
       fetchRulesFromAllServers().catch((err) =>
         console.error("Background refresh error:", err)
       );
@@ -725,7 +874,6 @@ const Homepage = () => {
     }
   };
 
-  // ✅ UPDATED: Single delete — instant local remove + toast
   const handleDelete = async (id: number) => {
     const assignmentToDelete = assignments.find((a) => a.id === id);
     if (!assignmentToDelete) return;
@@ -782,7 +930,6 @@ const Homepage = () => {
       const result = await response.json();
 
       if (result.success) {
-        // ✅ INSTANT: Local state నుండి వెంటనే తీసేయి (re-fetch అవసరం లేదు!)
         setAssignments((prev) => prev.filter((a) => a.id !== id));
 
         if (showDetailsModal && selectedAssignment?.id === id) {
@@ -793,13 +940,11 @@ const Homepage = () => {
           prev.filter((selectedId) => selectedId !== id)
         );
 
-        // ✅ Styled success toast (browser alert బదులు)
         showToast(
           "success",
           `Route "${assignmentToDelete.request}" deleted successfully from ${server.displayName}!`
         );
 
-        // ✅ Background లో re-fetch (UI block చేయదు)
         fetchRulesFromAllServers().catch((err) =>
           console.error("Background refresh error:", err)
         );
@@ -978,7 +1123,7 @@ const Homepage = () => {
     <div className="min-h-screen bg-black text-white">
       <Header onCreateRoute={() => setShowCreateModal(true)} />
 
-      {/* ✅ NEW: Toast Notification */}
+      {/* ✅ Toast Notification */}
       {toast && (
         <div className="fixed top-24 right-6 z-[100] animate-slide-in">
           <div
@@ -1868,6 +2013,20 @@ const Homepage = () => {
         </div>
       )}
     </div>
+  );
+};
+
+const Homepage = () => {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-black flex items-center justify-center text-white">
+          <div className="animate-spin text-3xl">⟳</div>
+        </div>
+      }
+    >
+      <HomepageContent />
+    </Suspense>
   );
 };
 

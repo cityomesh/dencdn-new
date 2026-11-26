@@ -2,11 +2,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Client } from 'ssh2';
 
-// Define proper types
 interface Rule {
   id: number;
-  // 'any' badulu 'unknown' vaadi linting error fix chesam
-  [key: string]: unknown; 
+  [key: string]: unknown;
 }
 
 interface RulesData {
@@ -20,6 +18,11 @@ interface SyncResponse {
   };
   Routes?: Rule[];
 }
+
+// ✅ NEW: Connection timeout constants (fast fail)
+const CONNECT_TIMEOUT_MS = 5000;   // 5s (was 10s)
+const EXEC_TIMEOUT_MS = 8000;      // 8s for command execution
+const TOTAL_TIMEOUT_MS = 15000;    // 15s hard limit per server
 
 export async function POST(request: NextRequest) {
   try {
@@ -35,15 +38,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Connect via SSH and fetch rules.conf
-    const rulesData = await fetchRulesViaSSH(ipAddress, sshUsername, sshPassword, sshPort);
+    const rulesData = await fetchRulesViaSSH(
+      ipAddress,
+      sshUsername,
+      sshPassword,
+      sshPort
+    );
 
     if (!rulesData) {
       return NextResponse.json(
-        { 
-          success: false, 
+        {
+          success: false,
           message: 'Failed to fetch rules.conf or empty data',
-          data: { routes: [] }
+          data: { routes: [] },
         },
         { status: 200 }
       );
@@ -52,17 +59,17 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       message: 'Rules fetched successfully',
-      data: rulesData
+      data: rulesData,
     });
-
   } catch (error: unknown) {
     console.error('API Error:', error);
-    const errorMessage = error instanceof Error ? error.message : 'Internal server error';
+    const errorMessage =
+      error instanceof Error ? error.message : 'Internal server error';
     return NextResponse.json(
-      { 
-        success: false, 
+      {
+        success: false,
         message: errorMessage,
-        data: { routes: [], error: errorMessage }
+        data: { routes: [], error: errorMessage },
       },
       { status: 500 }
     );
@@ -70,131 +77,193 @@ export async function POST(request: NextRequest) {
 }
 
 async function fetchRulesViaSSH(
-  ipAddress: string, 
-  sshUsername: string, 
-  sshPassword: string, 
+  ipAddress: string,
+  sshUsername: string,
+  sshPassword: string,
   sshPort: number
 ): Promise<RulesData | null> {
   return new Promise((resolve) => {
     const conn = new Client();
-    
+    let resolved = false;
+    let hardTimeout: NodeJS.Timeout | null = null;
+
+    // ✅ Helper: ఒక్కసారి మాత్రమే resolve అవ్వాలి
+    const safeResolve = (data: RulesData) => {
+      if (resolved) return;
+      resolved = true;
+      if (hardTimeout) clearTimeout(hardTimeout);
+      try {
+        conn.end();
+      } catch {
+        // ignore
+      }
+      resolve(data);
+    };
+
+    // ✅ Hard timeout — ఏదైనా hang అయితే 15s లో fail
+    hardTimeout = setTimeout(() => {
+      console.error(`Hard timeout for ${ipAddress} after ${TOTAL_TIMEOUT_MS}ms`);
+      safeResolve({
+        routes: [],
+        error: `Timeout after ${TOTAL_TIMEOUT_MS / 1000}s`,
+      });
+    }, TOTAL_TIMEOUT_MS);
+
     conn.on('ready', () => {
       console.log(`SSH Connected to ${ipAddress}`);
-      
+
+      // ✅ Exec timeout — command hang అయితే
+      const execTimeout = setTimeout(() => {
+        console.error(`Exec timeout for ${ipAddress}`);
+        safeResolve({
+          routes: [],
+          error: `Command timeout after ${EXEC_TIMEOUT_MS / 1000}s`,
+        });
+      }, EXEC_TIMEOUT_MS);
+
       conn.exec('cat /etc/nimble/rules.conf', (err, stream) => {
         if (err) {
-          conn.end();
+          clearTimeout(execTimeout);
           console.error('SSH exec error:', err);
-          resolve({ routes: [], error: `SSH exec error: ${err.message}` });
+          safeResolve({
+            routes: [],
+            error: `SSH exec error: ${err.message}`,
+          });
           return;
         }
-        
+
         let data = '';
-        
+        let dataLimitReached = false;
+
         stream.on('data', (chunk: Buffer) => {
-          data += chunk.toString();
-        });
-        
-        stream.on('close', (code: number | null) => {
-          conn.end();
-          
-          if (code && code !== 0) {
-            console.error(`SSH command failed with code ${code}`);
-            resolve({ routes: [], error: `Command failed with code ${code}` });
+          // ✅ Safety: 5MB కంటే ఎక్కువ ఉంటే ఆపు (malformed file protection)
+          if (data.length > 5 * 1024 * 1024) {
+            dataLimitReached = true;
+            stream.destroy();
             return;
           }
-          
-          console.log(`Received ${data.length} bytes from ${ipAddress}`);
-          
-          try {
-            // Parse the rules.conf content
-            // First, remove the comment line
-            // const cleanedData = data.replace(/\/\*.*?\*\//g, '').trim();
-            // const cleanedData = data.replace(/^[\s\r\n]*\/\*[\s\S]*?\*\/[\s\r\n]*/, '').trim();
+          data += chunk.toString();
+        });
 
+        stream.on('close', (code: number | null) => {
+          clearTimeout(execTimeout);
+
+          if (dataLimitReached) {
+            safeResolve({
+              routes: [],
+              error: 'File too large (>5MB)',
+            });
+            return;
+          }
+
+          if (code && code !== 0) {
+            console.error(`SSH command failed with code ${code}`);
+            safeResolve({
+              routes: [],
+              error: `Command failed with code ${code}`,
+            });
+            return;
+          }
+
+          console.log(`Received ${data.length} bytes from ${ipAddress}`);
+
+          try {
             const jsonStart = data.indexOf('{');
             if (jsonStart === -1) {
-              // If no JSON found, maybe file is empty or invalid
-              resolve({ routes: [], error: 'No JSON found in rules.conf' });
+              safeResolve({
+                routes: [],
+                error: 'No JSON found in rules.conf',
+              });
               return;
             }
             const cleanedData = data.substring(jsonStart).trim();
-            
+
             if (!cleanedData) {
-              resolve({ routes: [], error: 'Empty rules.conf file' });
+              safeResolve({
+                routes: [],
+                error: 'Empty rules.conf file',
+              });
               return;
             }
-            
+
             const parsedData = JSON.parse(cleanedData) as SyncResponse;
-            
-            // Extract routes from the JSON structure
+
             if (parsedData.SyncResponse?.Routes) {
-              resolve({
-                routes: (parsedData.SyncResponse.Routes as Rule[]).map((route, index) => ({
-                  ...route,
-                  id: index + 1
-                }))
+              safeResolve({
+                routes: (parsedData.SyncResponse.Routes as Rule[]).map(
+                  (route, index) => ({
+                    ...route,
+                    id: index + 1,
+                  })
+                ),
               });
             } else if (Array.isArray(parsedData)) {
-              resolve({
+              safeResolve({
                 routes: (parsedData as Rule[]).map((route, index) => ({
                   ...route,
-                  id: index + 1
-                }))
+                  id: index + 1,
+                })),
               });
             } else if (parsedData.Routes) {
-              resolve({
+              safeResolve({
                 routes: (parsedData.Routes as Rule[]).map((route, index) => ({
                   ...route,
-                  id: index + 1
-                }))
+                  id: index + 1,
+                })),
               });
             } else {
-              resolve({ routes: [], error: 'Invalid JSON structure in rules.conf' });
+              safeResolve({
+                routes: [],
+                error: 'Invalid JSON structure in rules.conf',
+              });
             }
-            
           } catch (parseError: unknown) {
             console.error('JSON parse error:', parseError);
             console.log('Raw data received:', data.substring(0, 500));
-            const errorMessage = parseError instanceof Error ? parseError.message : 'Unknown parse error';
-            resolve({ 
-              routes: [], 
-              error: `JSON parse error: ${errorMessage}. Data: ${data.substring(0, 200)}...` 
+            const errorMessage =
+              parseError instanceof Error
+                ? parseError.message
+                : 'Unknown parse error';
+            safeResolve({
+              routes: [],
+              error: `JSON parse error: ${errorMessage}. Data: ${data.substring(
+                0,
+                200
+              )}...`,
             });
           }
         });
-        
+
         stream.stderr.on('data', (stderrData: Buffer) => {
           console.error('SSH stderr:', stderrData.toString());
         });
       });
     });
-    
+
     conn.on('error', (err: Error) => {
       console.error(`SSH connection error to ${ipAddress}:`, err);
-      resolve({ 
-        routes: [], 
-        error: `SSH connection error: ${err.message}` 
+      safeResolve({
+        routes: [],
+        error: `SSH connection error: ${err.message}`,
       });
     });
-    
+
     conn.on('timeout', () => {
       console.error(`SSH connection timeout to ${ipAddress}`);
-      conn.end();
-      resolve({ 
-        routes: [], 
-        error: 'SSH connection timeout' 
+      safeResolve({
+        routes: [],
+        error: 'SSH connection timeout',
       });
     });
-    
-    // Set timeout for connection
+
     conn.connect({
       host: ipAddress,
       port: sshPort,
       username: sshUsername,
       password: sshPassword,
-      readyTimeout: 10000, // 10 seconds
-      keepaliveInterval: 10000
+      readyTimeout: CONNECT_TIMEOUT_MS, // ✅ 5s (was 10s)
+      keepaliveInterval: 0,             // ✅ disable (short connection)
+      keepaliveCountMax: 0,
     });
   });
 }
