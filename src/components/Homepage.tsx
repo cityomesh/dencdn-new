@@ -1,9 +1,11 @@
+// Homepage.tsx
 "use client";
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { 
-  FiRefreshCcw, FiSearch, FiTrash2, FiAlertCircle, FiChevronLeft, 
-  FiChevronRight, FiEdit, FiArrowLeft, FiPlus, FiCheckSquare, FiSquare 
+import {
+  FiRefreshCcw, FiSearch, FiTrash2, FiAlertCircle, FiChevronLeft,
+  FiChevronRight, FiEdit, FiArrowLeft, FiPlus, FiCheckSquare, FiSquare,
+  FiCheck, FiX
 } from "react-icons/fi";
 import Header from "./Header";
 import CreateRouteModal from "../components/CreateRouteModal";
@@ -42,7 +44,8 @@ interface Server {
   sshPassword: string;
   port: string;
   sshPort?: number;
-  serverType: "origin" | "edge";
+  serverType: "origin" | "edge" | "both";
+  parentServer?: string;
 }
 
 interface RulesResponse {
@@ -50,7 +53,6 @@ interface RulesResponse {
   error?: string;
 }
 
-// Bulk delete confirmation modal props
 interface BulkDeleteModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -59,8 +61,17 @@ interface BulkDeleteModalProps {
   isLoading: boolean;
 }
 
-// Bulk Delete Confirmation Modal Component
-const BulkDeleteModal = ({ isOpen, onClose, onConfirm, selectedCount, isLoading }: BulkDeleteModalProps) => {
+const CACHE_KEY = "homepage_assignments_cache";
+const CACHE_TIMESTAMP_KEY = "homepage_assignments_timestamp";
+const CACHE_MAX_AGE_MS = 10 * 60 * 1000; // 10 minutes
+
+const BulkDeleteModal = ({
+  isOpen,
+  onClose,
+  onConfirm,
+  selectedCount,
+  isLoading,
+}: BulkDeleteModalProps) => {
   if (!isOpen) return null;
 
   return (
@@ -72,19 +83,24 @@ const BulkDeleteModal = ({ isOpen, onClose, onConfirm, selectedCount, isLoading 
           </div>
           <div>
             <h3 className="text-lg font-bold text-white">Confirm Bulk Delete</h3>
-            <p className="text-gray-300 text-sm mt-1">This action cannot be undone</p>
+            <p className="text-gray-300 text-sm mt-1">
+              This action cannot be undone
+            </p>
           </div>
         </div>
-        
+
         <div className="mb-6">
           <p className="text-gray-300">
-            Are you sure you want to delete <span className="font-semibold text-red-300">{selectedCount}</span> selected route(s) from their respective servers?
+            Are you sure you want to delete{" "}
+            <span className="font-semibold text-red-300">{selectedCount}</span>{" "}
+            selected route(s) from their respective servers?
           </p>
           <p className="text-xs text-gray-400 mt-2">
-            Note: Routes will be deleted from the servers they belong to. This may take a few moments.
+            Note: Routes will be deleted from the servers they belong to. This
+            may take a few moments.
           </p>
         </div>
-        
+
         <div className="flex justify-end gap-3">
           <button
             onClick={onClose}
@@ -125,6 +141,7 @@ const Homepage = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(100);
   const [isLoading, setIsLoading] = useState(false);
+  const [isBackgroundFetching, setIsBackgroundFetching] = useState(false);
   const [servers, setServers] = useState<Server[]>([]);
   const [lastReloadTime, setLastReloadTime] = useState<string>("Never");
   const [selectedAssignment, setSelectedAssignment] = useState<RouteAssignment | null>(null);
@@ -136,25 +153,85 @@ const Homepage = () => {
     redirect: "",
     host: "",
     originPath: "",
-    useSSL: "false"
+    useSSL: "false",
   });
 
-  // Bulk selection states
   const [selectedRouteIds, setSelectedRouteIds] = useState<number[]>([]);
   const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
 
-  // Add ref to track assignments for useCallback
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
   const assignmentsRef = useRef(assignments);
-  
+  const hasFetchedRef = useRef(false);
+
   useEffect(() => {
     assignmentsRef.current = assignments;
   }, [assignments]);
 
-  // Get unique source servers from assignments for dropdown
+  // ============================================================
+  // ✅ CACHE: Load from localStorage on mount (INSTANT DATA)
+  // ============================================================
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    try {
+      const cached = localStorage.getItem(CACHE_KEY);
+      const cachedTime = localStorage.getItem(CACHE_TIMESTAMP_KEY);
+
+      if (cached && cachedTime) {
+        const age = Date.now() - parseInt(cachedTime, 10);
+        if (age < CACHE_MAX_AGE_MS) {
+          const parsed = JSON.parse(cached) as RouteAssignment[];
+          console.log(`✅ Loaded ${parsed.length} cached assignments (age: ${Math.round(age / 1000)}s)`);
+          setAssignments(parsed);
+          setLastReloadTime(new Date(parseInt(cachedTime, 10)).toLocaleString());
+        } else {
+          console.log("Cache expired, will fetch fresh data");
+          localStorage.removeItem(CACHE_KEY);
+          localStorage.removeItem(CACHE_TIMESTAMP_KEY);
+        }
+      }
+    } catch (err) {
+      console.error("Error loading cache:", err);
+    }
+  }, []);
+
+  // ✅ Save cache whenever assignments change (debounced)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (assignments.length === 0) return;
+    // Don't cache placeholder/pending states
+    const hasReal = assignments.some((a) => a.source !== "Connecting");
+    if (!hasReal) return;
+
+    try {
+      localStorage.setItem(CACHE_KEY, JSON.stringify(assignments));
+      localStorage.setItem(CACHE_TIMESTAMP_KEY, Date.now().toString());
+    } catch (err) {
+      console.error("Error saving cache:", err);
+    }
+  }, [assignments]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const message = sessionStorage.getItem("route-created-message");
+    if (message) {
+      setSuccessMessage(message);
+      sessionStorage.removeItem("route-created-message");
+
+      const timer = setTimeout(() => {
+        setSuccessMessage(null);
+      }, 8000);
+
+      return () => clearTimeout(timer);
+    }
+  }, []);
+
   const uniqueSourceServers = useMemo(() => {
     const serversSet = new Set<string>();
-    assignments.forEach(a => {
+    assignments.forEach((a) => {
       if (a.sourceServer) {
         serversSet.add(a.sourceServer);
       }
@@ -162,45 +239,50 @@ const Homepage = () => {
     return Array.from(serversSet).sort();
   }, [assignments]);
 
-  // Combined filtering logic
   useEffect(() => {
     let filtered = [...assignments];
 
-    // Apply search filter
     if (search.trim() !== "") {
-      filtered = filtered.filter(item =>
-        item.request.toLowerCase().includes(search.toLowerCase()) ||
-        item.redirect.toLowerCase().includes(search.toLowerCase()) ||
-        item.assignedServer.toLowerCase().includes(search.toLowerCase()) ||
-        item.sourceServer.toLowerCase().includes(search.toLowerCase()) ||
-        (item.host && item.host.toLowerCase().includes(search.toLowerCase()))
+      filtered = filtered.filter(
+        (item) =>
+          item.request.toLowerCase().includes(search.toLowerCase()) ||
+          item.redirect.toLowerCase().includes(search.toLowerCase()) ||
+          item.assignedServer.toLowerCase().includes(search.toLowerCase()) ||
+          item.sourceServer.toLowerCase().includes(search.toLowerCase()) ||
+          (item.host && item.host.toLowerCase().includes(search.toLowerCase()))
       );
     }
 
-    // Apply stream filter
     if (stream !== "all") {
-      filtered = filtered.filter(item => {
+      filtered = filtered.filter((item) => {
         if (stream === "hls") {
-          return item.request.includes(".m3u8") || 
-                 item.redirect.includes(".m3u8") || 
-                 item.request.toLowerCase().includes("hls");
+          return (
+            item.request.includes(".m3u8") ||
+            item.redirect.includes(".m3u8") ||
+            item.request.toLowerCase().includes("hls")
+          );
         } else if (stream === "dash") {
-          return item.request.includes(".mpd") || 
-                 item.redirect.includes(".mpd") ||
-                 item.request.toLowerCase().includes("dash");
+          return (
+            item.request.includes(".mpd") ||
+            item.redirect.includes(".mpd") ||
+            item.request.toLowerCase().includes("dash")
+          );
         } else if (stream === "tv") {
-          return !item.request.includes(".m3u8") && 
-                 !item.redirect.includes(".m3u8") &&
-                 !item.request.includes(".mpd") && 
-                 !item.redirect.includes(".mpd");
+          return (
+            !item.request.includes(".m3u8") &&
+            !item.redirect.includes(".m3u8") &&
+            !item.request.includes(".mpd") &&
+            !item.redirect.includes(".mpd")
+          );
         }
         return true;
       });
     }
 
-    // Apply source server filter
     if (selectedSourceServer !== "all") {
-      filtered = filtered.filter(item => item.sourceServer === selectedSourceServer);
+      filtered = filtered.filter(
+        (item) => item.sourceServer === selectedSourceServer
+      );
     }
 
     setFilteredAssignments(filtered);
@@ -208,16 +290,15 @@ const Homepage = () => {
     setSelectedRouteIds([]);
   }, [assignments, search, stream, selectedSourceServer]);
 
-  // Load servers from API
   useEffect(() => {
     fetchServers();
   }, []);
 
   const fetchServers = async () => {
     try {
-      const response = await fetch('/api/servers');
+      const response = await fetch("/api/servers");
       const data = await response.json();
-      
+
       if (data.success) {
         setServers(data.servers);
         console.log("Loaded servers from API:", data.servers.length);
@@ -229,174 +310,231 @@ const Homepage = () => {
     }
   };
 
-  const fetchRulesFromServer = async (server: Server): Promise<RulesResponse | null> => {
+  const fetchRulesFromServer = async (
+    server: Server
+  ): Promise<RulesResponse | null> => {
     try {
-      console.log(`Fetching rules from ${server.ipAddress}...`);
-      
-      const response = await fetch('/api/fetch-rules', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const response = await fetch("/api/fetch-rules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ipAddress: server.ipAddress,
           sshUsername: server.sshUsername,
           sshPassword: server.sshPassword,
-          sshPort: server.sshPort || 22
-        })
+          sshPort: server.sshPort || 22,
+        }),
       });
 
       const data = await response.json();
-      
-      console.log(`Response from ${server.ipAddress}:`, {
-        success: data.success,
-        routesCount: data.data?.routes?.length || 0,
-        error: data.data?.error
-      });
-      
+
       if (!data.success) {
-        throw new Error(data.message || data.data?.error || "Failed to fetch rules");
+        throw new Error(
+          data.message || data.data?.error || "Failed to fetch rules"
+        );
       }
 
       return data.data;
-
     } catch {
       console.error(`Error fetching rules from ${server.ipAddress}`);
-      return { 
-        routes: [], 
-        error: "Connection failed" 
+      return {
+        routes: [],
+        error: "Connection failed",
       };
     }
   };
 
-  const fetchRulesFromAllServers = useCallback(async () => {
-    if (servers.length === 0) {
-      console.log("No servers available to fetch rules from");
-      alert("No servers found. Please add servers first.");
-      return;
-    }
+  // ✅✅✅ Helper: Raw routes → RouteAssignment[]
+  const buildAssignments = useCallback(
+    (
+      results: Array<{ server: Server; rulesData: RulesResponse | null }>,
+      startId = 1
+    ): RouteAssignment[] => {
+      const out: RouteAssignment[] = [];
+      let id = startId;
 
-    setIsLoading(true);
-    
-    const newAssignments: RouteAssignment[] = [];
-    let assignmentId = 1;
-
-    for (const server of servers) {
-      try {
-        console.log(`Fetching rules from server: ${server.displayName} (${server.ipAddress})`);
-        
-        newAssignments.push({
-          id: assignmentId++,
-          request: `Connecting to ${server.ipAddress}...`,
-          redirect: "Fetching rules.conf...",
-          assignedServer: server.ipAddress,
-          sourceServer: server.displayName,
-          source: "Connecting",
-          status: "pending"
-        });
-
-        setAssignments([...newAssignments]);
-
-        const rulesData = await fetchRulesFromServer(server);
-        
-        // Remove the connecting message
-        const updatedAssignments = newAssignments.filter(a => 
-          !(a.request === `Connecting to ${server.ipAddress}...` && a.status === "pending")
-        );
-        
-        if (rulesData && rulesData.routes && Array.isArray(rulesData.routes) && rulesData.routes.length > 0) {
-          console.log(`Found ${rulesData.routes.length} routes in ${server.displayName}`);
-                  
+      for (const { server, rulesData } of results) {
+        if (
+          rulesData &&
+          rulesData.routes &&
+          Array.isArray(rulesData.routes) &&
+          rulesData.routes.length > 0
+        ) {
           rulesData.routes.forEach((route: Route) => {
-            const requestPath = route.path || route.request || '';
-            let redirectUrl = route.origin || route.redirect || '';
-            const originPath = route.origin_path || route.originPath || '';
-            
-            // Construct full URL with origin_path or requestPath
-            if (redirectUrl && !redirectUrl.includes('Error')) {
-              redirectUrl = redirectUrl.replace(/\/$/, '');
-              
-              if (!redirectUrl.startsWith('http://') && !redirectUrl.startsWith('https://')) {
+            const requestPath = route.path || route.request || "";
+            let redirectUrl = route.origin || route.redirect || "";
+            const originPath = route.origin_path || route.originPath || "";
+
+            if (redirectUrl && !redirectUrl.includes("Error")) {
+              redirectUrl = redirectUrl.replace(/\/$/, "");
+              if (
+                !redirectUrl.startsWith("http://") &&
+                !redirectUrl.startsWith("https://")
+              ) {
                 redirectUrl = `http://${redirectUrl}`;
               }
-              
               const pathToAdd = originPath || requestPath;
-              if (pathToAdd && pathToAdd !== '/' && !redirectUrl.includes(pathToAdd)) {
+              if (
+                pathToAdd &&
+                pathToAdd !== "/" &&
+                !redirectUrl.includes(pathToAdd)
+              ) {
                 redirectUrl = `${redirectUrl}${pathToAdd}`;
               }
             }
-            
-            if (!requestPath || !redirectUrl) {
-              console.warn('Skipping route missing path or origin:', route);
-              return;
-            }
-            
-            updatedAssignments.push({
-              id: assignmentId++,
+
+            if (!requestPath || !redirectUrl) return;
+
+            out.push({
+              id: id++,
               request: requestPath,
               redirect: redirectUrl,
               assignedServer: server.ipAddress,
               sourceServer: server.displayName,
               source: "rules.conf",
               status: "success",
-              host: route.host || '',
-              origin: route.origin || '',
+              host: route.host || "",
+              origin: route.origin || "",
               originPath: originPath || requestPath,
-              useSSL: route.use_ssl || route.useSSL || 'false'
+              useSSL: route.use_ssl || route.useSSL || "false",
             });
           });
         } else {
-          const errorMessage = rulesData?.error || "No routes found in rules.conf";
-          console.log(`No routes for ${server.displayName}: ${errorMessage}`);
-          
-          updatedAssignments.push({
-            id: assignmentId++,
+          const errorMessage =
+            rulesData?.error || "No routes found in rules.conf";
+          out.push({
+            id: id++,
             request: `/server-${server.ipAddress}/`,
             redirect: errorMessage,
             assignedServer: server.ipAddress,
             sourceServer: server.displayName,
             source: rulesData?.error ? "Error" : "Empty Config",
-            status: rulesData?.error ? "error" : "success"
+            status: rulesData?.error ? "error" : "success",
           });
         }
-
-        newAssignments.length = 0;
-        newAssignments.push(...updatedAssignments);
-        setAssignments([...newAssignments]);
-
-      } catch {
-        console.error(`Failed to fetch rules from ${server.displayName}`);
-        
-        const updatedAssignments = newAssignments.filter(a => 
-          !(a.request === `Connecting to ${server.ipAddress}...` && a.status === "pending")
-        );
-
-        updatedAssignments.push({
-          id: assignmentId++,
-          request: `/server-${server.ipAddress}/`,
-          redirect: `SSH Error: Connection failed`,
-          assignedServer: server.ipAddress,
-          sourceServer: server.displayName,
-          source: "SSH Error",
-          status: "error"
-        });
-
-        newAssignments.length = 0;
-        newAssignments.push(...updatedAssignments);
-        setAssignments([...newAssignments]);
       }
-    }
+      return out;
+    },
+    []
+  );
 
-    setIsLoading(false);
-    setLastReloadTime(new Date().toLocaleString());
-    setSelectedRouteIds([]);
-  }, [servers]);
+  // ✅✅✅ MAIN FETCH — 70 servers కి optimized parallel fetch
+  // Strategy: అన్ని servers ఒకేసారి fetch (parallel), batch లేదు.
+  // Kani connection failures వల్ల కొన్ని servers fail అయినా మిగతావి continue అవుతాయి.
+  const fetchRulesFromAllServers = useCallback(
+    async (options?: { silent?: boolean }) => {
+      const silent = options?.silent ?? false;
+
+      if (servers.length === 0) {
+        console.log("No servers available to fetch rules from");
+        if (!silent) alert("No servers found. Please add servers first.");
+        return;
+      }
+
+      // If cache exists, don't clear assignments (keep showing cached data)
+      const hasCachedData =
+        assignmentsRef.current.some((a) => a.source === "rules.conf");
+
+      if (!hasCachedData) {
+        // No cache — show placeholders immediately
+        setIsLoading(true);
+        const placeholderAssignments: RouteAssignment[] = servers.map(
+          (server, idx) => ({
+            id: -(idx + 1),
+            request: `Connecting to ${server.ipAddress}...`,
+            redirect: "Fetching rules.conf...",
+            assignedServer: server.ipAddress,
+            sourceServer: server.displayName,
+            source: "Connecting",
+            status: "pending" as const,
+          })
+        );
+        setAssignments(placeholderAssignments);
+      } else {
+        // Cache exists — show it, fetch in background silently
+        setIsBackgroundFetching(true);
+      }
+
+      // ✅ PARALLEL FETCH — అన్ని 70 servers ఒకేసారి
+      // Promise.allSettled వాడుతున్నాం — ఒకటి fail అయినా మిగతావి continue
+      console.log(`🚀 Fetching rules from ${servers.length} servers in parallel...`);
+
+      const fetchPromises = servers.map(async (server) => {
+        try {
+          const rulesData = await fetchRulesFromServer(server);
+          return { server, rulesData };
+        } catch (err) {
+          console.error(`Failed: ${server.displayName}`, err);
+          return {
+            server,
+            rulesData: {
+              routes: [],
+              error: "Connection failed",
+            } as RulesResponse,
+          };
+        }
+      });
+
+      // Progress updates: ప్రతి 5 servers తర్వాత UI update
+      // ఇలా చేస్తే user కి "data వస్తోంది" అని కనిపిస్తుంది
+      const results: Array<{
+        server: Server;
+        rulesData: RulesResponse | null;
+      }> = [];
+
+      // Process in chunks for progress updates, but still parallel
+      const CHUNK_SIZE = 10;
+      for (let i = 0; i < fetchPromises.length; i += CHUNK_SIZE) {
+        const chunk = fetchPromises.slice(i, i + CHUNK_SIZE);
+        const chunkResults = await Promise.all(chunk);
+        results.push(...chunkResults);
+
+        // ✅ Progressive update — ఇప్పటివరకు వచ్చినవి చూపించు
+        const partial = buildAssignments(results);
+        // Merge with any cached entries for servers not yet fetched
+        setAssignments(partial);
+        console.log(
+          `📥 Progress: ${results.length}/${servers.length} servers fetched`
+        );
+      }
+
+      // ✅ Final assignments
+      const finalAssignments = buildAssignments(results);
+      setAssignments(finalAssignments);
+
+      // ✅ Cache update
+      try {
+        if (typeof window !== "undefined") {
+          localStorage.setItem(CACHE_KEY, JSON.stringify(finalAssignments));
+          localStorage.setItem(CACHE_TIMESTAMP_KEY, Date.now().toString());
+        }
+      } catch (err) {
+        console.error("Error saving cache:", err);
+      }
+
+      setIsLoading(false);
+      setIsBackgroundFetching(false);
+      setLastReloadTime(new Date().toLocaleString());
+      setSelectedRouteIds([]);
+
+      console.log(`✅ Fetched rules from ${servers.length} servers`);
+    },
+    [servers, buildAssignments]
+  );
 
   const handleReload = async () => {
+    // Force reload — clear cache, fetch fresh
+    if (typeof window !== "undefined") {
+      localStorage.removeItem(CACHE_KEY);
+      localStorage.removeItem(CACHE_TIMESTAMP_KEY);
+    }
     await fetchRulesFromAllServers();
     setCurrentPage(1);
   };
 
+  // ✅ Auto-fetch on mount (only once)
   useEffect(() => {
-    if (servers.length > 0) {
+    if (servers.length > 0 && !hasFetchedRef.current) {
+      hasFetchedRef.current = true;
       fetchRulesFromAllServers();
     }
   }, [servers, fetchRulesFromAllServers]);
@@ -406,10 +544,9 @@ const Homepage = () => {
     selectedServers: Server[];
   }) => {
     const { originUrls, selectedServers } = data;
-    
+
     if (originUrls.length === 0 || selectedServers.length === 0) {
-      alert("Please add at least one URL and select at least one server");
-      return;
+      throw new Error("Please add at least one URL and select at least one server");
     }
 
     setIsLoading(true);
@@ -427,41 +564,28 @@ const Homepage = () => {
       }
 
       const routesToAdd: RouteToAdd[] = [];
-      
+
       for (const url of originUrls) {
         try {
           const urlObj = new URL(url);
-          
-          // Get the pathname (e.g., /Allocal2/Allocal2/manifest.mpd)
           const fullPath = urlObj.pathname;
-          
-          // Split the path and remove the last part (filename)
-          const pathParts = fullPath.split('/').filter(part => part.length > 0);
-          
-          // Remove the last part if it contains a file extension (.mpd, .m3u8, etc.)
+          const pathParts = fullPath.split("/").filter((part) => part.length > 0);
+
           if (pathParts.length > 0) {
             const lastPart = pathParts[pathParts.length - 1];
-            if (lastPart.includes('.')) {
-              // Remove the filename, keep only the directory path
+            if (lastPart.includes(".")) {
               pathParts.pop();
             }
           }
-          
-          // Reconstruct the path (ensure it starts and ends with /)
-          let finalPath = '/' + pathParts.join('/') + '/';
-          
-          // If somehow we got just '/', use a default
-          if (finalPath === '/') {
-            finalPath = '/stream/';
+
+          let finalPath = "/" + pathParts.join("/") + "/";
+          if (finalPath === "/") {
+            finalPath = "/stream/";
           }
-          
+
           const origin = urlObj.host;
-          const useSSL = url.startsWith('https') ? 'true' : 'false';
-          
-          console.log(`Processing URL: ${url}`);
-          console.log(`Original path: ${fullPath}`);
-          console.log(`Final path: ${finalPath}`);
-          
+          const useSSL = url.startsWith("https") ? "true" : "false";
+
           routesToAdd.push({
             host: "",
             path: finalPath,
@@ -470,12 +594,10 @@ const Homepage = () => {
             use_ssl: useSSL,
             geo: "",
             range: "",
-            playlist_caching_interval: "1"
+            playlist_caching_interval: "1",
           });
-          
         } catch (error) {
           console.error(`Error parsing URL ${url}:`, error);
-          // If URL parsing fails, use a simple default
           routesToAdd.push({
             host: "",
             path: "/stream/",
@@ -484,16 +606,15 @@ const Homepage = () => {
             use_ssl: "false",
             geo: "",
             range: "",
-            playlist_caching_interval: "1"
+            playlist_caching_interval: "1",
           });
         }
       }
 
-      // Write to each selected server
       const writePromises = selectedServers.map(async (server) => {
-        const response = await fetch('/api/write-rules', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+        const response = await fetch("/api/write-rules", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             serverId: server.id,
             ipAddress: server.ipAddress,
@@ -501,76 +622,84 @@ const Homepage = () => {
             sshPassword: server.sshPassword,
             sshPort: server.sshPort || 22,
             routes: routesToAdd,
-            action: 'append'
-          })
+            action: "append",
+          }),
         });
 
         const result = await response.json();
-        return { server: server.displayName, success: result.success, message: result.message };
+        return {
+          server: server.displayName,
+          success: result.success,
+          message: result.message,
+        };
       });
 
       const results = await Promise.all(writePromises);
-      
-      const allSuccess = results.every(r => r.success);
-      
+      const allSuccess = results.every((r) => r.success);
+
       if (allSuccess) {
-        await fetchRulesFromAllServers();
-        alert(`Routes created successfully on ${selectedServers.length} server(s)!`);
+        // Invalidate cache so next fetch gets fresh data
+        if (typeof window !== "undefined") {
+          localStorage.removeItem(CACHE_KEY);
+          localStorage.removeItem(CACHE_TIMESTAMP_KEY);
+        }
+        fetchRulesFromAllServers().catch((err) =>
+          console.error("Background refresh error:", err)
+        );
+        return;
       } else {
-        const failed = results.filter(r => !r.success).map(r => r.server);
-        alert(`Failed to write routes to: ${failed.join(', ')}`);
+        const failed = results.filter((r) => !r.success).map((r) => r.server);
+        throw new Error(`Failed to write routes to: ${failed.join(", ")}`);
       }
-      
     } catch (error) {
       console.error("Error creating routes:", error);
-      alert("Failed to create routes. Please try again.");
+      throw error;
     } finally {
       setIsLoading(false);
-      setShowCreateModal(false);
     }
   };
 
-  // Toggle single route selection
   const toggleRouteSelection = (routeId: number) => {
-    setSelectedRouteIds(prev => 
-      prev.includes(routeId) 
-        ? prev.filter(id => id !== routeId)
+    setSelectedRouteIds((prev) =>
+      prev.includes(routeId)
+        ? prev.filter((id) => id !== routeId)
         : [...prev, routeId]
     );
   };
 
-  // Select/Deselect all routes on current page
   const toggleSelectAll = () => {
     const currentPageIds = currentPageData
-      .filter(a => a.source === "rules.conf") // Only selectable routes
-      .map(a => a.id);
-    
-    if (selectedRouteIds.length === currentPageIds.length && currentPageIds.length > 0) {
-      // Deselect all
+      .filter((a) => a.source === "rules.conf")
+      .map((a) => a.id);
+
+    if (
+      selectedRouteIds.length === currentPageIds.length &&
+      currentPageIds.length > 0
+    ) {
       setSelectedRouteIds([]);
     } else {
-      // Select all
       setSelectedRouteIds(currentPageIds);
     }
   };
 
-  // Handle bulk delete
   const handleBulkDelete = async () => {
     if (selectedRouteIds.length === 0) return;
 
     setIsBulkDeleting(true);
 
     try {
-      // Group selected routes by server
-      const routesByServer = new Map<string, { server: Server; routes: RouteAssignment[] }>();
-      
-      selectedRouteIds.forEach(id => {
-        const route = assignments.find(a => a.id === id);
+      const routesByServer = new Map<
+        string,
+        { server: Server; routes: RouteAssignment[] }
+      >();
+
+      selectedRouteIds.forEach((id) => {
+        const route = assignments.find((a) => a.id === id);
         if (!route || route.source !== "rules.conf") return;
-        
-        const server = servers.find(s => s.displayName === route.sourceServer);
+
+        const server = servers.find((s) => s.displayName === route.sourceServer);
         if (!server) return;
-        
+
         const key = `${server.id}`;
         if (!routesByServer.has(key)) {
           routesByServer.set(key, { server, routes: [] });
@@ -578,55 +707,66 @@ const Homepage = () => {
         routesByServer.get(key)!.routes.push(route);
       });
 
-      // Delete routes from each server
-      const deletePromises = Array.from(routesByServer.values()).map(async ({ server, routes }) => {
-        const routesToDelete = routes.map(route => ({
-          host: route.host || "",
-          path: route.request,
-          origin: route.origin || new URL(route.redirect).host || server.ipAddress,
-          origin_path: route.originPath || route.request,
-          use_ssl: route.useSSL || "false",
-          geo: "",
-          range: "",
-          playlist_caching_interval: "1"
-        }));
+      const deletePromises = Array.from(routesByServer.values()).map(
+        async ({ server, routes }) => {
+          const routesToDelete = routes.map((route) => ({
+            host: route.host || "",
+            path: route.request,
+            origin:
+              route.origin || new URL(route.redirect).host || server.ipAddress,
+            origin_path: route.originPath || route.request,
+            use_ssl: route.useSSL || "false",
+            geo: "",
+            range: "",
+            playlist_caching_interval: "1",
+          }));
 
-        const response = await fetch('/api/write-rules', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            serverId: server.id,
-            ipAddress: server.ipAddress,
-            sshUsername: server.sshUsername,
-            sshPassword: server.sshPassword,
-            sshPort: server.sshPort || 22,
-            routes: routesToDelete,
-            action: 'delete'
-          })
-        });
+          const response = await fetch("/api/write-rules", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              serverId: server.id,
+              ipAddress: server.ipAddress,
+              sshUsername: server.sshUsername,
+              sshPassword: server.sshPassword,
+              sshPort: server.sshPort || 22,
+              routes: routesToDelete,
+              action: "delete",
+            }),
+          });
 
-        const result = await response.json();
-        return { server: server.displayName, success: result.success, count: routes.length };
-      });
+          const result = await response.json();
+          return {
+            server: server.displayName,
+            success: result.success,
+            count: routes.length,
+          };
+        }
+      );
 
       const results = await Promise.all(deletePromises);
-      
-      // Reload data
-      await fetchRulesFromAllServers();
-      
-      // Show summary
-      const successful = results.filter(r => r.success);
-      const failed = results.filter(r => !r.success);
-      
-      if (failed.length === 0) {
-        alert(`Successfully deleted ${selectedRouteIds.length} route(s) from ${successful.length} server(s)!`);
-      } else {
-        alert(`Partially completed: Deleted from ${successful.length} servers, failed on ${failed.length} servers. Please check individual servers.`);
+
+      if (typeof window !== "undefined") {
+        localStorage.removeItem(CACHE_KEY);
+        localStorage.removeItem(CACHE_TIMESTAMP_KEY);
       }
-      
+      await fetchRulesFromAllServers();
+
+      const successful = results.filter((r) => r.success);
+      const failed = results.filter((r) => !r.success);
+
+      if (failed.length === 0) {
+        alert(
+          `Successfully deleted ${selectedRouteIds.length} route(s) from ${successful.length} server(s)!`
+        );
+      } else {
+        alert(
+          `Partially completed: Deleted from ${successful.length} servers, failed on ${failed.length} servers. Please check individual servers.`
+        );
+      }
+
       setSelectedRouteIds([]);
       setShowBulkDeleteModal(false);
-      
     } catch (error) {
       console.error("Error in bulk delete:", error);
       alert("Failed to delete routes. Please try again.");
@@ -636,36 +776,47 @@ const Homepage = () => {
   };
 
   const handleDelete = async (id: number) => {
-    const assignmentToDelete = assignments.find(a => a.id === id);
+    const assignmentToDelete = assignments.find((a) => a.id === id);
     if (!assignmentToDelete) return;
 
-    const server = servers.find(s => s.displayName === assignmentToDelete.sourceServer);
+    const server = servers.find(
+      (s) => s.displayName === assignmentToDelete.sourceServer
+    );
     if (!server) {
       alert("Server not found");
       return;
     }
 
-    if (!window.confirm(`Are you sure you want to delete this route from server ${server.displayName}?`)) {
+    if (
+      !window.confirm(
+        `Are you sure you want to delete this route from server ${server.displayName}?`
+      )
+    ) {
       return;
     }
 
     setIsLoading(true);
 
     try {
-      const routesToDelete = [{
-        host: assignmentToDelete.host || "",
-        path: assignmentToDelete.request,
-        origin: assignmentToDelete.origin || new URL(assignmentToDelete.redirect).host || server.ipAddress,
-        origin_path: assignmentToDelete.originPath || assignmentToDelete.request,
-        use_ssl: assignmentToDelete.useSSL || "false",
-        geo: "",
-        range: "",
-        playlist_caching_interval: "1"
-      }];
+      const routesToDelete = [
+        {
+          host: assignmentToDelete.host || "",
+          path: assignmentToDelete.request,
+          origin:
+            assignmentToDelete.origin ||
+            new URL(assignmentToDelete.redirect).host ||
+            server.ipAddress,
+          origin_path: assignmentToDelete.originPath || assignmentToDelete.request,
+          use_ssl: assignmentToDelete.useSSL || "false",
+          geo: "",
+          range: "",
+          playlist_caching_interval: "1",
+        },
+      ];
 
-      const response = await fetch('/api/write-rules', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const response = await fetch("/api/write-rules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           serverId: server.id,
           ipAddress: server.ipAddress,
@@ -673,27 +824,31 @@ const Homepage = () => {
           sshPassword: server.sshPassword,
           sshPort: server.sshPort || 22,
           routes: routesToDelete,
-          action: 'delete'
-        })
+          action: "delete",
+        }),
       });
 
       const result = await response.json();
-      
+
       if (result.success) {
+        if (typeof window !== "undefined") {
+          localStorage.removeItem(CACHE_KEY);
+          localStorage.removeItem(CACHE_TIMESTAMP_KEY);
+        }
         await fetchRulesFromAllServers();
-        
+
         if (showDetailsModal && selectedAssignment?.id === id) {
           setShowDetailsModal(false);
         }
-        
-        // Remove from selected IDs if present
-        setSelectedRouteIds(prev => prev.filter(selectedId => selectedId !== id));
-        
+
+        setSelectedRouteIds((prev) =>
+          prev.filter((selectedId) => selectedId !== id)
+        );
+
         alert("Route deleted successfully from server!");
       } else {
         alert(`Failed to delete route: ${result.error}`);
       }
-      
     } catch (error) {
       console.error("Error deleting route:", error);
       alert("Failed to delete route. Please try again.");
@@ -709,39 +864,46 @@ const Homepage = () => {
   };
 
   const handleRowClick = (assignment: RouteAssignment, e: React.MouseEvent) => {
-    // Don't trigger if clicking on checkbox or action buttons
     const target = e.target as HTMLElement;
-    if (target.closest('input[type="checkbox"]') || target.closest('button')) {
+    if (target.closest('input[type="checkbox"]') || target.closest("button")) {
       return;
     }
     handleViewDetails(assignment);
   };
 
-  const handleEditClick = (assignment: RouteAssignment, e: React.MouseEvent) => {
+  const handleEditClick = (
+    assignment: RouteAssignment,
+    e: React.MouseEvent
+  ) => {
     e.stopPropagation();
     setSelectedAssignment(assignment);
     setEditFormData({
       request: assignment.request,
       redirect: assignment.redirect,
-      host: assignment.host || '',
-      originPath: assignment.originPath || '',
-      useSSL: assignment.useSSL || 'false'
+      host: assignment.host || "",
+      originPath: assignment.originPath || "",
+      useSSL: assignment.useSSL || "false",
     });
     setShowEditModal(true);
     setShowDetailsModal(false);
   };
 
-  const handleDeleteClick = (assignment: RouteAssignment, e: React.MouseEvent) => {
+  const handleDeleteClick = (
+    assignment: RouteAssignment,
+    e: React.MouseEvent
+  ) => {
     e.stopPropagation();
     handleDelete(assignment.id);
   };
 
   const handleEditSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!selectedAssignment) return;
-    
-    const server = servers.find(s => s.displayName === selectedAssignment.sourceServer);
+
+    const server = servers.find(
+      (s) => s.displayName === selectedAssignment.sourceServer
+    );
     if (!server) {
       alert("Server not found");
       return;
@@ -750,20 +912,25 @@ const Homepage = () => {
     setIsLoading(true);
 
     try {
-      const deleteRoutes = [{
-        host: selectedAssignment.host || "",
-        path: selectedAssignment.request,
-        origin: selectedAssignment.origin || new URL(selectedAssignment.redirect).host || server.ipAddress,
-        origin_path: selectedAssignment.originPath || selectedAssignment.request,
-        use_ssl: selectedAssignment.useSSL || "false",
-        geo: "",
-        range: "",
-        playlist_caching_interval: "1"
-      }];
+      const deleteRoutes = [
+        {
+          host: selectedAssignment.host || "",
+          path: selectedAssignment.request,
+          origin:
+            selectedAssignment.origin ||
+            new URL(selectedAssignment.redirect).host ||
+            server.ipAddress,
+          origin_path: selectedAssignment.originPath || selectedAssignment.request,
+          use_ssl: selectedAssignment.useSSL || "false",
+          geo: "",
+          range: "",
+          playlist_caching_interval: "1",
+        },
+      ];
 
-      await fetch('/api/write-rules', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      await fetch("/api/write-rules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           serverId: server.id,
           ipAddress: server.ipAddress,
@@ -771,24 +938,26 @@ const Homepage = () => {
           sshPassword: server.sshPassword,
           sshPort: server.sshPort || 22,
           routes: deleteRoutes,
-          action: 'delete'
-        })
+          action: "delete",
+        }),
       });
 
-      const addRoutes = [{
-        host: editFormData.host,
-        path: editFormData.request,
-        origin: new URL(editFormData.redirect).host || server.ipAddress,
-        origin_path: editFormData.originPath || editFormData.request,
-        use_ssl: editFormData.useSSL,
-        geo: "",
-        range: "",
-        playlist_caching_interval: "1"
-      }];
+      const addRoutes = [
+        {
+          host: editFormData.host,
+          path: editFormData.request,
+          origin: new URL(editFormData.redirect).host || server.ipAddress,
+          origin_path: editFormData.originPath || editFormData.request,
+          use_ssl: editFormData.useSSL,
+          geo: "",
+          range: "",
+          playlist_caching_interval: "1",
+        },
+      ];
 
-      const response = await fetch('/api/write-rules', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const response = await fetch("/api/write-rules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           serverId: server.id,
           ipAddress: server.ipAddress,
@@ -796,20 +965,23 @@ const Homepage = () => {
           sshPassword: server.sshPassword,
           sshPort: server.sshPort || 22,
           routes: addRoutes,
-          action: 'append'
-        })
+          action: "append",
+        }),
       });
 
       const result = await response.json();
-      
+
       if (result.success) {
+        if (typeof window !== "undefined") {
+          localStorage.removeItem(CACHE_KEY);
+          localStorage.removeItem(CACHE_TIMESTAMP_KEY);
+        }
         await fetchRulesFromAllServers();
         setShowEditModal(false);
         alert("Route updated successfully on server!");
       } else {
         alert(`Failed to update route: ${result.error}`);
       }
-      
     } catch (error) {
       console.error("Error updating route:", error);
       alert("Failed to update route. Please try again.");
@@ -832,29 +1004,55 @@ const Homepage = () => {
   const handlePageSizeChange = (newSize: number) => {
     setPageSize(newSize);
     setCurrentPage(1);
-    setSelectedRouteIds([]); // Clear selections when page size changes
+    setSelectedRouteIds([]);
   };
 
   const handlePageChange = (page: number) => {
     setCurrentPage(page);
-    setSelectedRouteIds([]); // Clear selections when page changes
+    setSelectedRouteIds([]);
   };
 
-  // Check if all selectable routes on current page are selected
-  const selectableRoutesOnPage = currentPageData.filter(a => a.source === "rules.conf");
-  const allSelected = selectableRoutesOnPage.length > 0 && 
-    selectableRoutesOnPage.every(route => selectedRouteIds.includes(route.id));
+  const selectableRoutesOnPage = currentPageData.filter(
+    (a) => a.source === "rules.conf"
+  );
+  const allSelected =
+    selectableRoutesOnPage.length > 0 &&
+    selectableRoutesOnPage.every((route) =>
+      selectedRouteIds.includes(route.id)
+    );
 
   return (
     <div className="min-h-screen bg-black text-white">
-      <Header onCreateRoute={handleCreateRoute} />
-      
+      <Header onCreateRoute={() => setShowCreateModal(true)} />
+
       <div className="px-20 py-28">
+        {successMessage && (
+          <div className="mb-6 bg-green-900/30 border border-green-700/50 rounded-lg p-4 flex items-start gap-3 shadow-lg">
+            <div className="p-2 bg-green-900/50 rounded-full flex-shrink-0">
+              <FiCheck className="text-green-400 text-xl" />
+            </div>
+            <div className="flex-1">
+              <h3 className="text-green-300 font-semibold text-sm">
+                Route Created Successfully
+              </h3>
+              <p className="text-green-200/80 text-sm mt-1">{successMessage}</p>
+            </div>
+            <button
+              onClick={() => setSuccessMessage(null)}
+              className="p-1 hover:bg-green-900/50 rounded transition-colors flex-shrink-0"
+              aria-label="Close"
+            >
+              <FiX className="text-green-400" />
+            </button>
+          </div>
+        )}
+
         <div className="mb-6 flex justify-between items-center">
-          <h1 className="text-3xl font-bold mb-2">Route Server Assignments</h1>
-          
+          <h1 className="text-3xl font-bold mb-2">
+            Route Server Assignments
+          </h1>
+
           <div className="flex gap-3">
-            {/* Bulk Delete Button - Shows when routes are selected */}
             {selectedRouteIds.length > 0 && (
               <button
                 onClick={() => setShowBulkDeleteModal(true)}
@@ -866,7 +1064,7 @@ const Homepage = () => {
                 <span>Delete Selected ({selectedRouteIds.length})</span>
               </button>
             )}
-            
+
             <button
               onClick={() => setShowCreateModal(true)}
               disabled={servers.length === 0}
@@ -907,7 +1105,6 @@ const Homepage = () => {
               <option value="tv">TV Channels</option>
             </select>
 
-            {/* Source Server Dropdown */}
             <select
               value={selectedSourceServer}
               onChange={(e) => setSelectedSourceServer(e.target.value)}
@@ -921,7 +1118,7 @@ const Homepage = () => {
               ))}
             </select>
 
-            <button 
+            <button
               onClick={handleReload}
               disabled={isLoading || servers.length === 0}
               className="p-2 rounded bg-[#1a1a1a] border border-gray-700 hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
@@ -939,14 +1136,23 @@ const Homepage = () => {
               )}
             </button>
 
-            <div className={`px-3 py-1 rounded text-sm ${
-              servers.length === 0 
-                ? "bg-red-900/30 text-red-300" 
-                : "bg-blue-900/30 text-blue-300"
-            }`}>
+            <div
+              className={`px-3 py-1 rounded text-sm ${
+                servers.length === 0
+                  ? "bg-red-900/30 text-red-300"
+                  : "bg-blue-900/30 text-blue-300"
+              }`}
+            >
               Servers: {servers.length}
               {servers.length === 0 && " (Add servers first)"}
             </div>
+
+            {isBackgroundFetching && (
+              <div className="px-3 py-1 bg-yellow-900/30 text-yellow-300 rounded text-sm flex items-center gap-2">
+                <span className="animate-spin text-xs">⟳</span>
+                Updating in background...
+              </div>
+            )}
 
             {lastReloadTime !== "Never" && (
               <div className="px-3 py-1 bg-green-900/30 text-green-300 rounded text-sm">
@@ -955,13 +1161,15 @@ const Homepage = () => {
             )}
           </div>
         </div>
-        
+
         <div className="h-px bg-gray-700 mb-4"></div>
 
         <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
           <div className="flex flex-col">
             <div className="text-gray-400 text-sm">
-              Showing <span className="text-white font-bold">{totalItems}</span> of <span className="text-white font-bold">{totalItems}</span> assignments
+              Showing <span className="text-white font-bold">{totalItems}</span>{" "}
+              of <span className="text-white font-bold">{totalItems}</span>{" "}
+              assignments
               {selectedRouteIds.length > 0 && (
                 <span className="ml-4 text-blue-400">
                   {selectedRouteIds.length} selected
@@ -969,7 +1177,7 @@ const Homepage = () => {
               )}
             </div>
           </div>
-          
+
           <div className="flex items-center gap-4">
             <div className="px-3 py-1 rounded bg-purple-900/30 text-purple-300 text-sm">
               {stream.toUpperCase()}: {totalItems}
@@ -986,12 +1194,13 @@ const Homepage = () => {
           <div className="p-4 border-b border-gray-700">
             <div className="flex justify-between items-center">
               <div className="text-sm text-gray-400">
-                Showing routes from {servers.length} server{servers.length !== 1 ? 's' : ''}
+                Showing routes from {servers.length} server
+                {servers.length !== 1 ? "s" : ""}
               </div>
-              
+
               {servers.length === 0 && (
-                <button 
-                  onClick={() => window.location.href = '/servers'}
+                <button
+                  onClick={() => (window.location.href = "/servers")}
                   className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-sm"
                 >
                   Add Servers First
@@ -1005,7 +1214,6 @@ const Homepage = () => {
               <thead>
                 <tr className="bg-[#1a1a1a] text-gray-300 sticky top-0 z-10">
                   <th className="px-4 py-3 text-left font-medium border-b border-gray-700 w-12">
-                    {/* Select All Checkbox */}
                     {selectableRoutesOnPage.length > 0 && (
                       <button
                         onClick={toggleSelectAll}
@@ -1044,15 +1252,24 @@ const Homepage = () => {
               <tbody>
                 {filteredAssignments.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-4 py-12 text-center text-gray-400">
+                    <td
+                      colSpan={7}
+                      className="px-4 py-12 text-center text-gray-400"
+                    >
                       <div className="flex flex-col items-center justify-center">
                         {servers.length === 0 ? (
                           <>
                             <FiAlertCircle className="text-3xl text-red-500 mb-4" />
-                            <div className="text-lg mb-2">No servers configured</div>
-                            <div className="text-sm mb-4">Add servers first to fetch rules.conf data</div>
-                            <button 
-                              onClick={() => window.location.href = '/servers'}
+                            <div className="text-lg mb-2">
+                              No servers configured
+                            </div>
+                            <div className="text-sm mb-4">
+                              Add servers first to fetch rules.conf data
+                            </div>
+                            <button
+                              onClick={() =>
+                                (window.location.href = "/servers")
+                              }
                               className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-sm"
                             >
                               Go to Servers Page
@@ -1061,21 +1278,30 @@ const Homepage = () => {
                         ) : isLoading ? (
                           <>
                             <div className="animate-spin text-3xl mb-4">⟳</div>
-                            <div className="text-lg mb-2">Fetching rules from servers...</div>
-                            <div className="text-sm">Please wait while we connect to your servers</div>
+                            <div className="text-lg mb-2">
+                              Fetching rules from servers...
+                            </div>
+                            <div className="text-sm">
+                              Please wait while we connect to your servers
+                            </div>
                           </>
                         ) : (
                           <>
-                            <div className="text-lg mb-2">No assignments found</div>
-                            <div className="text-sm mb-4">Click &quot;Reload Rules&quot; to fetch data from servers or create a new route</div>
+                            <div className="text-lg mb-2">
+                              No assignments found
+                            </div>
+                            <div className="text-sm mb-4">
+                              Click &quot;Reload Rules&quot; to fetch data from
+                              servers or create a new route
+                            </div>
                             <div className="flex gap-3">
-                              <button 
+                              <button
                                 onClick={handleReload}
                                 className="px-4 py-2 bg-green-600 hover:bg-green-700 rounded text-sm"
                               >
                                 Reload Rules
                               </button>
-                              <button 
+                              <button
                                 onClick={() => setShowCreateModal(true)}
                                 className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-sm flex items-center gap-2"
                               >
@@ -1091,24 +1317,33 @@ const Homepage = () => {
                 ) : (
                   currentPageData.map((assignment, index) => {
                     const isSelectable = assignment.source === "rules.conf";
-                    
+
                     return (
-                      <tr 
-                        key={assignment.id} 
+                      <tr
+                        key={assignment.id}
                         onClick={(e) => handleRowClick(assignment, e)}
                         className={`border-b border-gray-800 hover:bg-[#1a1a1a] transition-colors cursor-pointer ${
-                          index % 2 === 0 ? 'bg-white/5' : 'bg-white/10'
+                          index % 2 === 0 ? "bg-white/5" : "bg-white/10"
                         } ${
-                          assignment.status === "error" ? "bg-red-900/20" :
-                          assignment.status === "pending" ? "bg-yellow-900/20" : ""
-                        } ${selectedRouteIds.includes(assignment.id) ? 'bg-blue-900/20' : ''}`}
+                          assignment.status === "error"
+                            ? "bg-red-900/20"
+                            : assignment.status === "pending"
+                            ? "bg-yellow-900/20"
+                            : ""
+                        } ${
+                          selectedRouteIds.includes(assignment.id)
+                            ? "bg-blue-900/20"
+                            : ""
+                        }`}
                       >
                         <td className="px-4 py-3">
                           {isSelectable ? (
                             <input
                               type="checkbox"
                               checked={selectedRouteIds.includes(assignment.id)}
-                              onChange={() => toggleRouteSelection(assignment.id)}
+                              onChange={() =>
+                                toggleRouteSelection(assignment.id)
+                              }
                               onClick={(e) => e.stopPropagation()}
                               className="h-4 w-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-500"
                             />
@@ -1122,7 +1357,9 @@ const Homepage = () => {
                             {assignment.status === "pending" && (
                               <div className="flex items-center gap-2 mt-1">
                                 <span className="animate-spin text-xs">⟳</span>
-                                <span className="text-xs text-yellow-400">Connecting...</span>
+                                <span className="text-xs text-yellow-400">
+                                  Connecting...
+                                </span>
                               </div>
                             )}
                           </div>
@@ -1132,81 +1369,108 @@ const Homepage = () => {
                             </div>
                           )}
                         </td>
-                        
+
                         <td className="px-4 py-3">
                           <div className="font-mono text-green-300 break-all">
-                            {assignment.redirect && typeof assignment.redirect === 'string' && assignment.redirect.startsWith('http') 
-                              ? assignment.redirect 
-                              : assignment.redirect 
-                                ? `http://${assignment.redirect}`
-                                : 'No redirect URL'}
-                            {assignment.status === "error" && assignment.redirect && assignment.redirect.includes("Error") && (
-                              <div className="text-xs text-red-400 mt-1">
-                                {assignment.redirect}
+                            {assignment.redirect &&
+                            typeof assignment.redirect === "string" &&
+                            assignment.redirect.startsWith("http")
+                              ? assignment.redirect
+                              : assignment.redirect
+                              ? `http://${assignment.redirect}`
+                              : "No redirect URL"}
+                            {assignment.status === "error" &&
+                              assignment.redirect &&
+                              assignment.redirect.includes("Error") && (
+                                <div className="text-xs text-red-400 mt-1">
+                                  {assignment.redirect}
+                                </div>
+                              )}
+                          </div>
+                          {assignment.originPath &&
+                            assignment.originPath !== assignment.request && (
+                              <div className="text-xs text-gray-400 mt-1">
+                                Origin Path: {assignment.originPath}
                               </div>
                             )}
-                          </div>
-                          {assignment.originPath && assignment.originPath !== assignment.request && (
-                            <div className="text-xs text-gray-400 mt-1">
-                              Origin Path: {assignment.originPath}
-                            </div>
-                          )}
                         </td>
-                        
+
                         <td className="px-4 py-3">
-                          <span className={`px-3 py-1 rounded text-xs font-medium ${
-                            assignment.source === "rules.conf"
-                              ? "bg-blue-900/30 text-blue-300" 
-                              : assignment.status === "error"
-                              ? "bg-red-900/30 text-red-300"
-                              : assignment.status === "pending"
-                              ? "bg-yellow-900/30 text-yellow-300"
-                              : "bg-gray-800 text-gray-300"
-                          }`}>
+                          <span
+                            className={`px-3 py-1 rounded text-xs font-medium ${
+                              assignment.source === "rules.conf"
+                                ? "bg-blue-900/30 text-blue-300"
+                                : assignment.status === "error"
+                                ? "bg-red-900/30 text-red-300"
+                                : assignment.status === "pending"
+                                ? "bg-yellow-900/30 text-yellow-300"
+                                : "bg-gray-800 text-gray-300"
+                            }`}
+                          >
                             {assignment.assignedServer}
                           </span>
                         </td>
-                        
+
                         <td className="px-4 py-3">
                           <div className="bg-white text-black font-medium px-3 py-1 rounded text-sm inline-block">
                             {assignment.sourceServer}
                           </div>
                         </td>
-                        
+
                         <td className="px-4 py-3">
-                          <span className={`px-3 py-1 rounded text-xs font-medium ${
-                            assignment.source === "rules.conf" 
-                              ? "bg-green-900/30 text-green-300" 
-                              : assignment.source === "Error" || assignment.source === "SSH Error"
-                              ? "bg-red-900/30 text-red-300"
-                              : assignment.source === "Connecting"
-                              ? "bg-yellow-900/30 text-yellow-300"
-                              : "bg-gray-800 text-gray-300"
-                          }`}>
+                          <span
+                            className={`px-3 py-1 rounded text-xs font-medium ${
+                              assignment.source === "rules.conf"
+                                ? "bg-green-900/30 text-green-300"
+                                : assignment.source === "Error" ||
+                                  assignment.source === "SSH Error"
+                                ? "bg-red-900/30 text-red-300"
+                                : assignment.source === "Connecting"
+                                ? "bg-yellow-900/30 text-yellow-300"
+                                : "bg-gray-800 text-gray-300"
+                            }`}
+                          >
                             {assignment.source}
                           </span>
-                          {assignment.useSSL && assignment.useSSL === 'true' && (
-                            <div className="text-xs text-yellow-400 mt-1">SSL Enabled</div>
-                          )}
+                          {assignment.useSSL &&
+                            assignment.useSSL === "true" && (
+                              <div className="text-xs text-yellow-400 mt-1">
+                                SSL Enabled
+                              </div>
+                            )}
                         </td>
-                        
+
                         <td className="px-4 py-3">
                           <div className="flex gap-2">
-                            <button 
+                            <button
                               onClick={(e) => handleEditClick(assignment, e)}
                               className="bg-blue-600/20 hover:bg-blue-600/40 rounded-lg border border-blue-500/30 transition-all duration-200 shadow-lg hover:shadow-blue-500/20 p-2"
                               title="Edit route"
                               disabled={assignment.source !== "rules.conf"}
                             >
-                              <FiEdit className={`text-xl font-bold ${assignment.source === "rules.conf" ? "text-blue-400" : "text-gray-500"}`} size={20} />
+                              <FiEdit
+                                className={`text-xl font-bold ${
+                                  assignment.source === "rules.conf"
+                                    ? "text-blue-400"
+                                    : "text-gray-500"
+                                }`}
+                                size={20}
+                              />
                             </button>
-                            <button 
+                            <button
                               onClick={(e) => handleDeleteClick(assignment, e)}
                               className="bg-red-600/20 hover:bg-red-600/40 rounded-lg border border-red-500/30 transition-all duration-200 shadow-lg hover:shadow-red-500/20 p-2"
                               title="Delete route"
                               disabled={assignment.source !== "rules.conf"}
                             >
-                              <FiTrash2 className={`text-xl font-bold ${assignment.source === "rules.conf" ? "text-red-400" : "text-gray-500"}`} size={20} />
+                              <FiTrash2
+                                className={`text-xl font-bold ${
+                                  assignment.source === "rules.conf"
+                                    ? "text-red-400"
+                                    : "text-gray-500"
+                                }`}
+                                size={20}
+                              />
                             </button>
                           </div>
                         </td>
@@ -1221,10 +1485,12 @@ const Homepage = () => {
           {filteredAssignments.length > 0 && totalPages > 1 && (
             <div className="flex flex-wrap justify-between items-center p-4 border-t border-gray-700">
               <div className="text-sm text-gray-400 mb-2 md:mb-0">
-                Page Size: 
-                <select 
+                Page Size:
+                <select
                   value={pageSize}
-                  onChange={(e) => handlePageSizeChange(Number(e.target.value))}
+                  onChange={(e) =>
+                    handlePageSizeChange(Number(e.target.value))
+                  }
                   className="ml-2 bg-[#1a1a1a] border border-gray-700 rounded px-2 py-1"
                 >
                   <option value={10}>10</option>
@@ -1234,13 +1500,13 @@ const Homepage = () => {
                   <option value={200}>200</option>
                 </select>
               </div>
-              
+
               <div className="text-sm text-gray-400 mb-2 md:mb-0">
                 {startItem} to {endItem} of {totalItems}
               </div>
-              
+
               <div className="flex items-center gap-2">
-                <button 
+                <button
                   onClick={() => handlePageChange(currentPage - 1)}
                   disabled={currentPage === 1}
                   className="px-3 py-1 bg-[#1a1a1a] border border-gray-700 rounded hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
@@ -1248,7 +1514,7 @@ const Homepage = () => {
                   <FiChevronLeft size={14} />
                   <span>Prev</span>
                 </button>
-                
+
                 <div className="flex items-center gap-1">
                   {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
                     let pageNum;
@@ -1261,22 +1527,22 @@ const Homepage = () => {
                     } else {
                       pageNum = currentPage - 2 + i;
                     }
-                    
+
                     return (
                       <button
                         key={pageNum}
                         onClick={() => handlePageChange(pageNum)}
                         className={`px-3 py-1 rounded ${
                           currentPage === pageNum
-                            ? 'bg-blue-600 text-white'
-                            : 'bg-[#1a1a1a] border border-gray-700 text-gray-300 hover:bg-gray-800'
+                            ? "bg-blue-600 text-white"
+                            : "bg-[#1a1a1a] border border-gray-700 text-gray-300 hover:bg-gray-800"
                         }`}
                       >
                         {pageNum}
                       </button>
                     );
                   })}
-                  
+
                   {totalPages > 5 && currentPage < totalPages - 2 && (
                     <>
                       <span className="text-gray-500">...</span>
@@ -1284,8 +1550,8 @@ const Homepage = () => {
                         onClick={() => handlePageChange(totalPages)}
                         className={`px-3 py-1 rounded ${
                           currentPage === totalPages
-                            ? 'bg-blue-600 text-white'
-                            : 'bg-[#1a1a1a] border border-gray-700 text-gray-300 hover:bg-gray-800'
+                            ? "bg-blue-600 text-white"
+                            : "bg-[#1a1a1a] border border-gray-700 text-gray-300 hover:bg-gray-800"
                         }`}
                       >
                         {totalPages}
@@ -1293,8 +1559,8 @@ const Homepage = () => {
                     </>
                   )}
                 </div>
-                
-                <button 
+
+                <button
                   onClick={() => handlePageChange(currentPage + 1)}
                   disabled={currentPage === totalPages}
                   className="px-3 py-1 bg-[#1a1a1a] border border-gray-700 rounded hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
@@ -1302,9 +1568,10 @@ const Homepage = () => {
                   <span>Next</span>
                   <FiChevronRight size={14} />
                 </button>
-                
+
                 <span className="text-sm text-gray-300 ml-2">
-                  Page <span className="font-semibold">{currentPage}</span> of <span className="font-semibold">{totalPages}</span>
+                  Page <span className="font-semibold">{currentPage}</span> of{" "}
+                  <span className="font-semibold">{totalPages}</span>
                 </span>
               </div>
             </div>
@@ -1319,7 +1586,6 @@ const Homepage = () => {
         availableServers={servers}
       />
 
-      {/* Bulk Delete Confirmation Modal */}
       <BulkDeleteModal
         isOpen={showBulkDeleteModal}
         onClose={() => setShowBulkDeleteModal(false)}
@@ -1341,8 +1607,12 @@ const Homepage = () => {
                   <FiArrowLeft className="text-gray-400" size={20} />
                 </button>
                 <div>
-                  <h3 className="text-lg font-bold text-white">Route Server Assignment Details</h3>
-                  <p className="text-sm text-gray-400">From {selectedAssignment.sourceServer}</p>
+                  <h3 className="text-lg font-bold text-white">
+                    Route Server Assignment Details
+                  </h3>
+                  <p className="text-sm text-gray-400">
+                    From {selectedAssignment.sourceServer}
+                  </p>
                 </div>
               </div>
               <button
@@ -1352,7 +1622,7 @@ const Homepage = () => {
                 <FiAlertCircle className="text-gray-400" />
               </button>
             </div>
-            
+
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -1368,10 +1638,12 @@ const Homepage = () => {
                   </div>
                 </div>
               </div>
-              
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="text-xs text-gray-400">Assigned Server</label>
+                  <label className="text-xs text-gray-400">
+                    Assigned Server
+                  </label>
                   <div className="text-white p-2 bg-gray-900 rounded mt-1">
                     {selectedAssignment.assignedServer}
                   </div>
@@ -1383,41 +1655,50 @@ const Homepage = () => {
                   </div>
                 </div>
               </div>
-              
+
               <div>
                 <label className="text-xs text-gray-400">Source</label>
                 <div className="text-white p-2 bg-gray-900 rounded mt-1">
                   {selectedAssignment.source}
                 </div>
               </div>
-              
+
               {selectedAssignment.host && (
                 <div>
                   <label className="text-xs text-gray-400">Host</label>
                   <div className="text-white p-2 bg-gray-900 rounded mt-1 break-all">
-                    {selectedAssignment.host || '(empty)'}
+                    {selectedAssignment.host || "(empty)"}
                   </div>
                 </div>
               )}
-              
-              {selectedAssignment.originPath && selectedAssignment.originPath !== selectedAssignment.request && (
-                <div>
-                  <label className="text-xs text-gray-400">Origin Path</label>
-                  <div className="text-white p-2 bg-gray-900 rounded mt-1 break-all">
-                    {selectedAssignment.originPath}
+
+              {selectedAssignment.originPath &&
+                selectedAssignment.originPath !== selectedAssignment.request && (
+                  <div>
+                    <label className="text-xs text-gray-400">Origin Path</label>
+                    <div className="text-white p-2 bg-gray-900 rounded mt-1 break-all">
+                      {selectedAssignment.originPath}
+                    </div>
                   </div>
-                </div>
-              )}
-              
+                )}
+
               {selectedAssignment.useSSL && (
                 <div>
                   <label className="text-xs text-gray-400">SSL</label>
-                  <div className={`p-2 rounded mt-1 ${selectedAssignment.useSSL === 'true' ? 'bg-green-900/30 text-green-300' : 'bg-gray-900 text-gray-300'}`}>
-                    {selectedAssignment.useSSL === 'true' ? 'Enabled' : 'Disabled'}
+                  <div
+                    className={`p-2 rounded mt-1 ${
+                      selectedAssignment.useSSL === "true"
+                        ? "bg-green-900/30 text-green-300"
+                        : "bg-gray-900 text-gray-300"
+                    }`}
+                  >
+                    {selectedAssignment.useSSL === "true"
+                      ? "Enabled"
+                      : "Disabled"}
                   </div>
                 </div>
               )}
-              
+
               <div className="flex justify-end gap-3 pt-4 border-t border-gray-700">
                 <button
                   onClick={() => setShowDetailsModal(false)}
@@ -1466,8 +1747,13 @@ const Homepage = () => {
                   <FiArrowLeft className="text-gray-400" size={20} />
                 </button>
                 <div>
-                  <h3 className="text-lg font-bold text-white">Edit Re-streaming Route</h3>
-                  <p className="text-sm text-gray-400">Edit the re-streaming setup for {selectedAssignment.sourceServer}</p>
+                  <h3 className="text-lg font-bold text-white">
+                    Edit Re-streaming Route
+                  </h3>
+                  <p className="text-sm text-gray-400">
+                    Edit the re-streaming setup for{" "}
+                    {selectedAssignment.sourceServer}
+                  </p>
                 </div>
               </div>
               <button
@@ -1477,7 +1763,7 @@ const Homepage = () => {
                 <FiAlertCircle className="text-gray-400" />
               </button>
             </div>
-            
+
             <form onSubmit={handleEditSubmit}>
               <div className="space-y-4">
                 <div>
@@ -1487,12 +1773,17 @@ const Homepage = () => {
                   <input
                     type="text"
                     value={editFormData.request}
-                    onChange={(e) => setEditFormData({...editFormData, request: e.target.value})}
+                    onChange={(e) =>
+                      setEditFormData({
+                        ...editFormData,
+                        request: e.target.value,
+                      })
+                    }
                     className="w-full px-4 py-2 rounded bg-[#1a1a1a] border border-gray-700 focus:outline-none focus:border-blue-500 text-white"
                     placeholder="/stream/"
                   />
                 </div>
-                
+
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-1">
                     Redirect URL:
@@ -1500,12 +1791,17 @@ const Homepage = () => {
                   <input
                     type="text"
                     value={editFormData.redirect}
-                    onChange={(e) => setEditFormData({...editFormData, redirect: e.target.value})}
+                    onChange={(e) =>
+                      setEditFormData({
+                        ...editFormData,
+                        redirect: e.target.value,
+                      })
+                    }
                     className="w-full px-4 py-2 rounded bg-[#1a1a1a] border border-gray-700 focus:outline-none focus:border-blue-500 text-white"
                     placeholder="http://example.com:9229/stream/"
                   />
                 </div>
-                
+
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-1">
                     Host (Optional):
@@ -1513,12 +1809,14 @@ const Homepage = () => {
                   <input
                     type="text"
                     value={editFormData.host}
-                    onChange={(e) => setEditFormData({...editFormData, host: e.target.value})}
+                    onChange={(e) =>
+                      setEditFormData({ ...editFormData, host: e.target.value })
+                    }
                     className="w-full px-4 py-2 rounded bg-[#1a1a1a] border border-gray-700 focus:outline-none focus:border-blue-500 text-white"
                     placeholder="example.com"
                   />
                 </div>
-                
+
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-1">
                     Origin Path (Optional):
@@ -1526,26 +1824,36 @@ const Homepage = () => {
                   <input
                     type="text"
                     value={editFormData.originPath}
-                    onChange={(e) => setEditFormData({...editFormData, originPath: e.target.value})}
-                    className="w-full px-4 py-2 rounded bg-[#1a1a1a] border border-gray-700 focus:outline-none focus:border-blue-500 text-white"
+                    onChange={(e) =>
+                      setEditFormData({
+                        ...editFormData,
+                        originPath: e.target.value,
+                      })
+                    }
+                    className="w-full px-4 py-2 bg-[#1a1a1a] border border-gray-700 rounded focus:outline-none focus:border-blue-500 text-white"
                     placeholder="/stream/"
                   />
                 </div>
-                
+
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-1">
                     Use SSL:
                   </label>
                   <select
                     value={editFormData.useSSL}
-                    onChange={(e) => setEditFormData({...editFormData, useSSL: e.target.value})}
+                    onChange={(e) =>
+                      setEditFormData({
+                        ...editFormData,
+                        useSSL: e.target.value,
+                      })
+                    }
                     className="w-full px-4 py-2 rounded bg-[#1a1a1a] border border-gray-700 focus:outline-none focus:border-blue-500 text-white"
                   >
                     <option value="false">No</option>
                     <option value="true">Yes</option>
                   </select>
                 </div>
-                
+
                 <div className="flex justify-end gap-3 pt-4 border-t border-gray-700">
                   <button
                     type="button"
@@ -1559,7 +1867,7 @@ const Homepage = () => {
                     className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-sm"
                     disabled={isLoading}
                   >
-                    {isLoading ? 'Saving...' : 'Save Changes'}
+                    {isLoading ? "Saving..." : "Save Changes"}
                   </button>
                 </div>
               </div>
